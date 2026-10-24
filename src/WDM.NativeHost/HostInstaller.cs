@@ -8,6 +8,7 @@ namespace WDM.NativeHost;
 /// Registers and unregisters the WDM Native Messaging Host in the Windows Registry
 /// for Google Chrome, Microsoft Edge, Brave, and Mozilla Firefox.
 /// </summary>
+[System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public static class HostInstaller
 {
     public const string HostName = "com.wdm.downloader";

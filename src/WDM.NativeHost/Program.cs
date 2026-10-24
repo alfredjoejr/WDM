@@ -1,5 +1,6 @@
 namespace WDM.NativeHost;
 
+[System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public static class Program
 {
     public static async Task<int> Main(string[] args)

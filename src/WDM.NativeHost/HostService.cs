@@ -20,7 +20,8 @@ public sealed class HostService
     public async Task HandleMessageAsync(JsonElement root, CancellationToken cancellationToken)
     {
         var action = root.TryGetProperty("action", out var actionProp) ? actionProp.GetString() : null;
-        var requestId = root.TryGetProperty("requestId", out var reqProp) ? reqProp.GetString() : Guid.NewGuid().ToString("N");
+        var requestId = (root.TryGetProperty("requestId", out var reqProp) ? reqProp.GetString() : null) 
+                        ?? Guid.NewGuid().ToString("N");
 
         try
         {
