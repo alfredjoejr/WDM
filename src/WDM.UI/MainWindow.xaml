@@ -1,0 +1,13 @@
+<Window x:Class="WDM.UI.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="WDM • Next-Gen Windows Download Manager" 
+        Height="720" Width="1160"
+        MinHeight="580" MinWidth="880"
+        WindowStartupLocation="CenterScreen"
+        Background="#0A0F1D">
+    <Grid>
+        <wv2:WebView2 x:Name="WebView" />
+    </Grid>
+</Window>

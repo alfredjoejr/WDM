@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WDM - Windows Download Manager</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="header">
+      <div class="brand">
+        <div class="logo-box">
+          <svg viewBox="0 0 24 24" class="logo-icon"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg>
+        </div>
+        <div>
+          <h1 class="title">WDM</h1>
+          <span class="subtitle">Windows Download Manager</span>
+        </div>
+      </div>
+      <div id="hostStatus" class="status-badge checking">
+        <span class="status-dot"></span>
+        <span id="statusText">Checking...</span>
+      </div>
+    </header>
+
+    <!-- Quick Download Box -->
+    <section class="section quick-download">
+      <div class="input-group">
+        <input type="url" id="urlInput" placeholder="Paste download URL (HTTP/S, Video)..." autocomplete="off" spellcheck="false">
+        <button id="btnDownload" class="primary-btn" title="Start Download with WDM">
+          <svg viewBox="0 0 24 24" class="btn-icon"><path d="M5 20h14v-2H5v2zM19 9h-4V3H9v6H5l7 7 7-7z"/></svg>
+          <span>Start</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- Active Transfers -->
+    <section class="section active-transfers">
+      <div class="section-header">
+        <h2>Active Downloads</h2>
+        <span id="downloadCount" class="counter">0</span>
+      </div>
+      <div id="downloadsList" class="downloads-list">
+        <div class="empty-state">
+          <svg viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM12 18l5-5h-3V9h-4v4H7l5 5z"/></svg>
+          <p>No active downloads</p>
+          <span>Downloads caught from your browser appear here</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Settings & Quick Toggles -->
+    <section class="section settings-panel">
+      <div class="section-header">
+        <h2>Preferences</h2>
+      </div>
+
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <span class="label">Intercept Browser Downloads</span>
+          <span class="desc">Auto-grab files downloaded in Chrome/Edge</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="chkIntercept" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <span class="label">Floating Video Badge</span>
+          <span class="desc">Show download button on HTML5 players</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="chkSniffer" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="connections-row">
+        <span class="label">Parallel Connections</span>
+        <div class="segmented-control" id="connSelector">
+          <button type="button" class="segment" data-val="8">8x</button>
+          <button type="button" class="segment active" data-val="16">16x</button>
+          <button type="button" class="segment" data-val="32">32x</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <span>.NET 10 • Zero-Stitch Parallel Engine</span>
+      <a href="#" id="lnkTestHost">Test Engine</a>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -71,6 +71,37 @@ dotnet run --project src/WDM.Cli/WDM.Cli.csproj -- benchmark https://proof.ovh.n
 
 ---
 
+## 🖥️ Launching the Modern Desktop UI
+
+To start the hardware-accelerated desktop dashboard:
+```bash
+dotnet run --project src/WDM.UI/WDM.UI.csproj
+```
+Or directly double-click the published standalone executable:
+```
+bin\WDM.UI\WDM.UI.exe
+```
+
+---
+
+## 🌐 Loading the Browser Extension (Chrome / Edge / Brave)
+
+1. **Register the Native Host**:
+   Double-click `extension/install-host.bat` (or run `./bin/NativeHost/WDM.NativeHost.exe --install`). This registers the Native Messaging Host in your Windows Registry under `HKCU`.
+2. **Open Extensions Page**:
+   - In Chrome/Brave: navigate to `chrome://extensions`
+   - In Edge: navigate to `edge://extensions`
+3. **Enable Developer Mode**:
+   Toggle the **"Developer mode"** switch (top-right corner).
+4. **Load Unpacked**:
+   Click **"Load unpacked"** and select the [`extension/`](file:///c:/Users/joash/OneDrive/Documents/Github/WDM/extension) folder.
+5. **Ready!**
+   - Click the WDM icon in your browser toolbar to view the popup dashboard.
+   - Any file downloaded from the web will be caught and accelerated by WDM.
+   - Any video page (YouTube, Vimeo, etc.) will display the floating "⚡ Download Video" pill.
+
+---
+
 ## 📋 Roadmap Status
 
 - [x] **Step 1: Core Engine & Initial Components (.NET 10)**
@@ -83,10 +114,20 @@ dotnet run --project src/WDM.Cli/WDM.Cli.csproj -- benchmark https://proof.ovh.n
   - [x] Media extraction bridge interface
   - [x] Rich CLI runner with Spectre.Console
   - [x] Automated test suite (6/6 passing)
-- [ ] **Step 2: Browser Extension (Pending)**
-  - Manifest V3 WebExtension (Chrome/Edge/Firefox)
-  - Native Messaging Host IPC
-  - Floating download pill on media players
-- [ ] **Step 3: Desktop UI (Pending)**
-  - Modern Windows 11 Fluent / Mica interface
-  - System tray mini-widget & toast notifications
+- [x] **Step 2: Browser Extension & Native Messaging Host**
+  - [x] Manifest V3 WebExtension (`extension/`)
+  - [x] Dedicated Native Messaging Host (`src/WDM.NativeHost`)
+  - [x] Windows Registry auto-installer for Chrome, Edge, Brave, and Firefox
+  - [x] Download interception (`chrome.downloads.onDeterminingFilename`)
+  - [x] Floating video sniffer badge on HTML5 players (`content.js` + `content.css`)
+  - [x] Glassmorphic dark-mode popup dashboard (`popup/`)
+  - [x] Right-click context menus ("Download with WDM", "Download Media with WDM")
+- [x] **Step 3: Desktop UI**
+  - [x] Modern Windows 11 Fluent / Mica interface with hardware-accelerated WebView2
+  - [x] Live oscilloscope bandwidth spline chart (HTML5 Canvas)
+  - [x] Interactive **Parallel Worker Threads Drawer** (real-time chunk offset visualization)
+  - [x] Integrated Streaming Media Grabber (YouTube, HLS, DASH)
+  - [x] Live ISP multi-connection benchmark suite
+  - [x] Native shell actions (Open File, Show in Windows Explorer, SHA-256 copy)
+  - [x] Auto-clipboard link sniffer
+  - [x] Published standalone application (`bin/WDM.UI/WDM.UI.exe`)
