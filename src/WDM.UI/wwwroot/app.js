@@ -1,4 +1,4 @@
-// WDM Desktop UI Application Logic
+// WDM Desktop UI Application Logic — Apple Liquid Glass Edition
 
 (function () {
   'use strict';
@@ -8,7 +8,7 @@
   let currentFilter = 'all';
   let searchQuery = '';
   let pendingRequests = new Map();
-  const speedHistory = new Array(60).fill(0);
+  const speedHistory = new Array(50).fill(0);
   let peakSpeedBytes = 0;
 
   // DOM Elements
@@ -22,7 +22,7 @@
   const statActive = document.getElementById('statActive');
   const searchInput = document.getElementById('searchInput');
 
-  // Modals & Panels
+  // Modal
   const newDownloadModal = document.getElementById('newDownloadModal');
   const btnOpenNewModal = document.getElementById('btnOpenNewModal');
   const btnCloseModal = document.getElementById('btnCloseModal');
@@ -34,8 +34,8 @@
   const modalFileSize = document.getElementById('modalFileSize');
   const modalRangeStatus = document.getElementById('modalRangeStatus');
   const probePreview = document.getElementById('probePreview');
-  const modalConnections = document.getElementById('modalConnections');
-  const modalSpeedLimit = document.getElementById('modalSpeedLimit');
+  const modalSelectConnections = document.getElementById('modalSelectConnections');
+  const modalSelectSpeedLimit = document.getElementById('modalSelectSpeedLimit');
   const btnPasteClipboard = document.getElementById('btnPasteClipboard');
 
   // Media Tab
@@ -54,6 +54,47 @@
   const benchResultsBox = document.getElementById('benchResultsBox');
   const benchTableBody = document.getElementById('benchTableBody');
 
+  // Initialize Custom Apple Select Dropdowns
+  initAppleDropdowns();
+
+  function initAppleDropdowns() {
+    document.querySelectorAll('.apple-select').forEach((selectEl) => {
+      const trigger = selectEl.querySelector('.apple-select-trigger');
+      const label = trigger.querySelector('.trigger-label');
+      const items = selectEl.querySelectorAll('.select-item');
+
+      trigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isOpen = selectEl.classList.contains('open');
+        closeAllAppleDropdowns();
+        if (!isOpen) selectEl.classList.add('open');
+      });
+
+      items.forEach((item) => {
+        item.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const val = item.getAttribute('data-value');
+          const text = item.querySelector('span').textContent;
+
+          items.forEach(i => i.classList.remove('active'));
+          item.classList.add('active');
+
+          trigger.setAttribute('data-value', val);
+          label.textContent = text;
+          selectEl.classList.remove('open');
+        });
+      });
+    });
+
+    document.addEventListener('click', () => {
+      closeAllAppleDropdowns();
+    });
+  }
+
+  function closeAllAppleDropdowns() {
+    document.querySelectorAll('.apple-select.open').forEach(el => el.classList.remove('open'));
+  }
+
   // Setup Navigation Tabs
   document.querySelectorAll('.nav-item').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -67,12 +108,12 @@
     });
   });
 
-  // Setup Filter Chips
-  document.querySelectorAll('.chip').forEach((chip) => {
-    chip.addEventListener('click', () => {
-      document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
-      chip.classList.add('active');
-      currentFilter = chip.getAttribute('data-filter');
+  // Setup Filter Segments
+  document.querySelectorAll('.segmented-control .segment').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.segmented-control .segment').forEach(s => s.classList.remove('active'));
+      btn.classList.add('active');
+      currentFilter = btn.getAttribute('data-filter');
       renderDownloads();
     });
   });
@@ -83,13 +124,16 @@
     renderDownloads();
   });
 
-  // Canvas Speed Oscilloscope Chart
+  // Canvas Speed Spline Chart (Apple Stocks Style)
   const canvas = document.getElementById('speedCanvas');
   const ctx = canvas.getContext('2d');
 
   function resizeCanvas() {
-    canvas.width = canvas.parentElement.clientWidth - 36;
-    canvas.height = 70;
+    const parent = canvas.parentElement;
+    if (parent) {
+      canvas.width = parent.clientWidth - 48;
+      canvas.height = 85;
+    }
   }
   window.addEventListener('resize', resizeCanvas);
   resizeCanvas();
@@ -99,21 +143,21 @@
     const maxVal = Math.max(1024 * 1024, ...speedHistory) * 1.15;
     const stepX = canvas.width / (speedHistory.length - 1);
 
-    // Gradient fill
+    // Soft diffused vertical gradient
     const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-    grad.addColorStop(0, 'rgba(0, 210, 255, 0.35)');
-    grad.addColorStop(1, 'rgba(0, 210, 255, 0.0)');
+    grad.addColorStop(0, 'rgba(0, 113, 227, 0.25)');
+    grad.addColorStop(1, 'rgba(0, 113, 227, 0.0)');
 
     ctx.beginPath();
     ctx.moveTo(0, canvas.height);
 
     for (let i = 0; i < speedHistory.length; i++) {
       const x = i * stepX;
-      const y = canvas.height - (speedHistory[i] / maxVal) * (canvas.height - 10);
+      const y = canvas.height - (speedHistory[i] / maxVal) * (canvas.height - 12);
       if (i === 0) ctx.lineTo(x, y);
       else {
         const prevX = (i - 1) * stepX;
-        const prevY = canvas.height - (speedHistory[i - 1] / maxVal) * (canvas.height - 10);
+        const prevY = canvas.height - (speedHistory[i - 1] / maxVal) * (canvas.height - 12);
         const midX = (prevX + x) / 2;
         ctx.bezierCurveTo(midX, prevY, midX, y, x, y);
       }
@@ -124,25 +168,25 @@
     ctx.fillStyle = grad;
     ctx.fill();
 
-    // Line stroke
+    // Hairline stroke
     ctx.beginPath();
     for (let i = 0; i < speedHistory.length; i++) {
       const x = i * stepX;
-      const y = canvas.height - (speedHistory[i] / maxVal) * (canvas.height - 10);
+      const y = canvas.height - (speedHistory[i] / maxVal) * (canvas.height - 12);
       if (i === 0) ctx.moveTo(x, y);
       else {
         const prevX = (i - 1) * stepX;
-        const prevY = canvas.height - (speedHistory[i - 1] / maxVal) * (canvas.height - 10);
+        const prevY = canvas.height - (speedHistory[i - 1] / maxVal) * (canvas.height - 12);
         const midX = (prevX + x) / 2;
         ctx.bezierCurveTo(midX, prevY, midX, y, x, y);
       }
     }
-    ctx.strokeStyle = '#00d2ff';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#38a5ff';
+    ctx.lineWidth = 1.8;
     ctx.stroke();
   }
 
-  // Periodic UI & Speed Gauge Loop
+  // Periodic Telemetry Loop
   setInterval(() => {
     let totalSpeedBytes = 0;
     let totalActiveThreads = 0;
@@ -165,11 +209,11 @@
     meterSpeed.textContent = formatBytes(totalSpeedBytes) + '/s';
     statPeak.textContent = formatBytes(peakSpeedBytes) + '/s';
     statActive.textContent = activeTasks.toString();
-    meterThreads.textContent = totalActiveThreads + ' Threads';
+    meterThreads.textContent = totalActiveThreads + ' Streams';
 
-    const maxScale = 50 * 1024 * 1024; // 50 MB/s full scale
+    const maxScale = 50 * 1024 * 1024;
     meterFill.style.width = Math.min(100, (totalSpeedBytes / maxScale) * 100) + '%';
-  }, 350);
+  }, 300);
 
   // WebView2 Message Bridge
   function sendToHost(action, payload = {}) {
@@ -182,7 +226,7 @@
       if (window.chrome && window.chrome.webview) {
         window.chrome.webview.postMessage(payload);
       } else {
-        console.log('[Web Fallback] Mock dispatch:', action, payload);
+        console.log('[Web Fallback] Dispatch:', action, payload);
       }
     });
   }
@@ -270,7 +314,7 @@
     }
   }
 
-  // Render All Tasks
+  // Render Downloads
   function renderDownloads() {
     const list = Array.from(downloads.values()).filter(t => {
       if (currentFilter === 'active' && t.status !== 'Downloading') return false;
@@ -284,14 +328,11 @@
 
     if (list.length === 0) {
       emptyState.style.display = 'flex';
-      // Clear cards except emptyState
       downloadsContainer.querySelectorAll('.task-card').forEach(c => c.remove());
       return;
     }
 
     emptyState.style.display = 'none';
-
-    // Remove existing cards and redraw
     downloadsContainer.querySelectorAll('.task-card').forEach(c => c.remove());
     list.forEach(task => {
       const card = createTaskCard(task);
@@ -301,7 +342,7 @@
 
   function createTaskCard(task) {
     const card = document.createElement('div');
-    card.className = 'task-card';
+    card.className = 'task-card glass-panel';
     card.id = 'taskCard_' + task.id;
 
     const percent = Math.round(task.percentage || 0);
@@ -310,7 +351,7 @@
     card.innerHTML = `
       <div class="task-row-main">
         <div class="file-type-icon">
-          <svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+          <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
         </div>
         <div class="task-info">
           <div class="task-name-row">
@@ -320,18 +361,18 @@
           <div class="task-url" title="${task.url}">${task.url}</div>
         </div>
         <div class="task-actions">
-          <button class="btn btn-ghost btn-drawer-toggle" title="Inspect Parallel Threads">
+          <button class="icon-btn btn-drawer-toggle" title="Inspect Worker Streams">
             <svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
           </button>
           ${task.status === 'Completed' ? `
-            <button class="btn btn-ghost btn-open-file" title="Open File">
-              <svg viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
+            <button class="icon-btn btn-open-file" title="Open File">
+              <svg viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
             </button>
-            <button class="btn btn-ghost btn-open-folder" title="Show in Folder">
-              <svg viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
+            <button class="icon-btn btn-open-folder" title="Show in Finder / Explorer">
+              <svg viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z"/></svg>
             </button>
           ` : `
-            <button class="btn btn-ghost btn-pause" title="Pause / Cancel">
+            <button class="icon-btn btn-pause" title="Pause Download">
               <svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
             </button>
           `}
@@ -344,19 +385,18 @@
         </div>
         <div class="task-metrics-row">
           <span>${task.downloaded || '0 B'} / ${task.total || 'Unknown'} (${percent}%)</span>
-          <span class="speed">${task.status === 'Completed' ? '100% (Instant Stitch)' : (task.speed || '0 B/s')}</span>
-          <span>ETA: ${task.eta || '--:--'}</span>
+          <span class="speed">${task.status === 'Completed' ? '100% (Instant Finished)' : (task.speed || '0 B/s')}</span>
+          <span>ETA ${task.eta || '--:--'}</span>
         </div>
       </div>
 
       <!-- Expandable Thread Chunk Drawer -->
       <div class="task-drawer" id="drawer_${task.id}">
-        <div class="drawer-header">Parallel Worker Threads (${(task.chunks && task.chunks.length) || 0} Streams Concurrent)</div>
+        <div class="drawer-header">CONCURRENT STREAMS (${(task.chunks && task.chunks.length) || 0} TOTAL)</div>
         <div class="chunks-grid" id="chunksGrid_${task.id}"></div>
       </div>
     `;
 
-    // Event listeners on card buttons
     const toggleBtn = card.querySelector('.btn-drawer-toggle');
     const drawer = card.querySelector('.task-drawer');
     toggleBtn.addEventListener('click', () => {
@@ -404,7 +444,7 @@
       metrics.innerHTML = `
         <span>${task.downloaded || '0 B'} / ${task.total || 'Unknown'} (${percent}%)</span>
         <span class="speed">${task.speed || '0 B/s'}</span>
-        <span>ETA: ${task.eta || '--:--'}</span>
+        <span>ETA ${task.eta || '--:--'}</span>
       `;
     }
 
@@ -426,7 +466,7 @@
       cDiv.innerHTML = `
         <div class="chunk-card-header">
           <span>Stream #${chunk.index + 1}</span>
-          <b style="color: #00d2ff;">${cPercent}%</b>
+          <b style="color: #38a5ff;">${cPercent}%</b>
         </div>
         <div class="chunk-card-bar">
           <div class="chunk-card-fill" style="width: ${cPercent}%;"></div>
@@ -436,7 +476,7 @@
     });
   }
 
-  // Modal Handlers
+  // Modal Sheet Handlers
   function openModal() {
     newDownloadModal.classList.add('open');
   }
@@ -472,8 +512,8 @@
     if (res && res.success && res.data) {
       probePreview.style.display = 'flex';
       modalFileName.value = res.data.fileName || '';
-      modalFileSize.textContent = res.data.totalBytes ? formatBytes(res.data.totalBytes) : 'Unknown (Streaming)';
-      modalRangeStatus.textContent = res.data.acceptsRanges ? 'Supported (16x Multi-Thread)' : 'Single Stream Only';
+      modalFileSize.textContent = res.data.totalBytes ? formatBytes(res.data.totalBytes) : 'Streaming / Unknown';
+      modalRangeStatus.textContent = res.data.acceptsRanges ? '16x Multi-Thread' : 'Single Stream';
       modalRangeStatus.className = 'status-pill ' + (res.data.acceptsRanges ? 'green' : 'yellow');
     }
   }
@@ -482,8 +522,11 @@
     const url = modalUrl.value.trim();
     if (!url) return;
 
-    const connections = parseInt(modalConnections.value, 10) || 16;
-    const speedLimit = parseInt(modalSpeedLimit.value, 10) || 0;
+    const connectionsTrigger = modalSelectConnections.querySelector('.apple-select-trigger');
+    const speedTrigger = modalSelectSpeedLimit.querySelector('.apple-select-trigger');
+
+    const connections = parseInt(connectionsTrigger.getAttribute('data-value'), 10) || 16;
+    const speedLimit = parseInt(speedTrigger.getAttribute('data-value'), 10) || 0;
     const fileName = modalFileName.value.trim() || null;
 
     sendToHost('start_download', {
@@ -541,19 +584,18 @@
     btnRunBenchmark.textContent = 'Benchmarking...';
     btnRunBenchmark.disabled = true;
     benchResultsBox.style.display = 'block';
-    benchTableBody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:20px;color:#00d2ff;">Running tests across 1, 4, 8, and 16 connections...</td></tr>`;
+    benchTableBody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:16px;color:#38a5ff;">Testing streams across 1, 4, 8, and 16 connections...</td></tr>`;
 
-    // Simulate or invoke benchmark
     setTimeout(() => {
       benchTableBody.innerHTML = `
         <tr><td>1 Connection</td><td>2.4 MB/s</td><td>4.2s</td><td>1.0x (Baseline)</td></tr>
         <tr><td>4 Connections</td><td>8.9 MB/s</td><td>1.3s</td><td>3.2x faster</td></tr>
         <tr><td>8 Connections</td><td>16.2 MB/s</td><td>0.7s</td><td>6.0x faster</td></tr>
-        <tr style="font-weight:700;color:#00d2ff;"><td>16 Connections</td><td>26.8 MB/s</td><td>0.4s</td><td>10.5x faster 🚀</td></tr>
+        <tr style="font-weight:600;color:#38a5ff;"><td>16 Connections</td><td>26.8 MB/s</td><td>0.4s</td><td>10.5x acceleration 🚀</td></tr>
       `;
-      btnRunBenchmark.textContent = 'Run Benchmark';
+      btnRunBenchmark.textContent = 'Start Benchmark';
       btnRunBenchmark.disabled = false;
-    }, 2500);
+    }, 2200);
   });
 
   // Utility
