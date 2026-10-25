@@ -287,19 +287,45 @@ public partial class MainWindow : Window
 
     private static void HandleOpenFile(JsonElement root)
     {
-        var path = root.GetProperty("filePath").GetString();
-        if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+        var path = root.TryGetProperty("filePath", out var p) ? p.GetString() : null;
+        if (string.IsNullOrWhiteSpace(path)) return;
+
+        try
         {
-            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            if (File.Exists(path))
+            {
+                Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            }
+            else if (Directory.Exists(path))
+            {
+                Process.Start("explorer.exe", $"\"{path}\"");
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[HandleOpenFile error]: {ex}");
         }
     }
 
     private static void HandleOpenFolder(JsonElement root)
     {
-        var path = root.GetProperty("filePath").GetString();
-        if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+        var path = root.TryGetProperty("filePath", out var p) ? p.GetString() : null;
+        if (string.IsNullOrWhiteSpace(path)) return;
+
+        try
         {
-            Process.Start("explorer.exe", $"/select,\"{path}\"");
+            if (File.Exists(path))
+            {
+                Process.Start("explorer.exe", $"/select,\"{path}\"");
+            }
+            else if (Directory.Exists(path))
+            {
+                Process.Start("explorer.exe", $"\"{path}\"");
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[HandleOpenFolder error]: {ex}");
         }
     }
 
@@ -371,7 +397,7 @@ public partial class MainWindow : Window
         {
             try
             {
-                var dir = await _mediaExtractor.DownloadMediaAsync(
+                var completedPath = await _mediaExtractor.DownloadMediaAsync(
                     url,
                     formatId,
                     destinationDirectory,
@@ -392,7 +418,8 @@ public partial class MainWindow : Window
                 {
                     action = "media_download_completed",
                     downloadId,
-                    destinationDirectory = dir
+                    filePath = completedPath,
+                    destinationDirectory = Directory.Exists(completedPath) ? completedPath : (Path.GetDirectoryName(completedPath) ?? destinationDirectory)
                 });
             }
             catch (Exception ex)
@@ -440,9 +467,20 @@ public partial class MainWindow : Window
         Dispatcher.Invoke(() =>
         {
             string? text = null;
-            if (Clipboard.ContainsText())
+            for (int i = 0; i < 5; i++)
             {
-                text = Clipboard.GetText();
+                try
+                {
+                    if (Clipboard.ContainsText())
+                    {
+                        text = Clipboard.GetText();
+                        break;
+                    }
+                }
+                catch
+                {
+                    Thread.Sleep(30);
+                }
             }
             PostToWeb(new { requestId, action = "clipboard_result", text });
         });

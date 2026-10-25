@@ -381,9 +381,23 @@ public sealed partial class MediaExtractor : IMediaExtractor
             }
         };
 
+        string? downloadedFilePath = null;
+
         proc.OutputDataReceived += (_, e) =>
         {
             if (string.IsNullOrWhiteSpace(e.Data)) return;
+
+            // Capture output file path from yt-dlp logs
+            if (e.Data.Contains("Destination:", StringComparison.OrdinalIgnoreCase))
+            {
+                var idx = e.Data.IndexOf("Destination:", StringComparison.OrdinalIgnoreCase) + "Destination:".Length;
+                downloadedFilePath = e.Data[idx..].Trim().Trim('"');
+            }
+            else if (e.Data.Contains("Merging formats into", StringComparison.OrdinalIgnoreCase))
+            {
+                var idx = e.Data.IndexOf("Merging formats into", StringComparison.OrdinalIgnoreCase) + "Merging formats into".Length;
+                downloadedFilePath = e.Data[idx..].Trim().Trim('"');
+            }
 
             var match = ProgressRegex().Match(e.Data);
             if (match.Success && double.TryParse(match.Groups[1].Value, out var percent))
@@ -407,6 +421,31 @@ public sealed partial class MediaExtractor : IMediaExtractor
             var err = await stdErrTask;
             throw new InvalidOperationException($"Media download failed (code {proc.ExitCode}): {err}");
         }
+
+        if (!string.IsNullOrWhiteSpace(downloadedFilePath) && File.Exists(downloadedFilePath))
+        {
+            return downloadedFilePath;
+        }
+
+        if (!string.IsNullOrWhiteSpace(outputFileName))
+        {
+            var candidate = Path.Combine(outDir, outputFileName);
+            if (File.Exists(candidate)) return candidate;
+        }
+
+        try
+        {
+            var dirInfo = new DirectoryInfo(outDir);
+            var newestFile = dirInfo.EnumerateFiles()
+                .Where(f => f.LastWriteTimeUtc >= DateTime.UtcNow.AddMinutes(-10))
+                .OrderByDescending(f => f.LastWriteTimeUtc)
+                .FirstOrDefault();
+            if (newestFile != null)
+            {
+                return newestFile.FullName;
+            }
+        }
+        catch { }
 
         return outDir;
     }

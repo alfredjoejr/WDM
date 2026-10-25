@@ -1313,3 +1313,30 @@ input:checked + .switch-pill:before {
   background: rgba(255, 159, 10, 0.16);
   color: #ff9f0a;
 }
+
+/* Apple Toast Notification */
+.apple-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: rgba(25, 32, 48, 0.88);
+  backdrop-filter: blur(35px) saturate(190%);
+  -webkit-backdrop-filter: blur(35px) saturate(190%);
+  border: 1px solid var(--glass-border-highlight);
+  color: var(--label-primary);
+  padding: 10px 18px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45), var(--glass-specular);
+  z-index: 9999;
+  opacity: 0;
+  transform: translateY(12px) scale(0.96);
+  pointer-events: none;
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.apple-toast.visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}

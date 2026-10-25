@@ -362,7 +362,8 @@
           task.percentage = 100;
           task.speed = 'Completed';
           task.speedBytes = 0;
-          task.filePath = msg.destinationDirectory;
+          task.filePath = msg.filePath || msg.destinationDirectory;
+          task.destinationDirectory = msg.destinationDirectory;
           renderDownloads();
         }
         break;
@@ -393,10 +394,10 @@
         break;
 
       case 'clipboard_result':
-        if (msg.text && (msg.text.startsWith('http://') || msg.text.startsWith('https://'))) {
-          modalUrl.value = msg.text;
-          openModal();
-          triggerProbe(msg.text);
+        if (msg.text) {
+          handlePastedUrl(msg.text);
+        } else {
+          showToast("Clipboard is empty or does not contain text.");
         }
         break;
     }
@@ -449,19 +450,22 @@
           <div class="task-url" title="${task.url}">${task.url}</div>
         </div>
         <div class="task-actions">
-          <button class="icon-btn btn-drawer-toggle" title="Inspect Worker Streams">
+          <button class="icon-btn btn-drawer-toggle" title="Details / Streams">
             <svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
           </button>
           ${task.status === 'Completed' ? `
             <button class="icon-btn btn-open-file" title="Open File">
               <svg viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
             </button>
-            <button class="icon-btn btn-open-folder" title="Show in Finder / Explorer">
+            <button class="icon-btn btn-open-folder" title="Show in File Explorer">
               <svg viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z"/></svg>
             </button>
+            <button class="icon-btn btn-remove-task" title="Remove from list">
+              <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+            </button>
           ` : `
-            <button class="icon-btn btn-pause" title="Pause Download">
-              <svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+            <button class="icon-btn btn-pause" title="Cancel Download">
+              <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
             </button>
           `}
         </div>
@@ -480,8 +484,16 @@
 
       <!-- Expandable Thread Chunk Drawer -->
       <div class="task-drawer" id="drawer_${task.id}">
-        <div class="drawer-header">CONCURRENT STREAMS (${(task.chunks && task.chunks.length) || 0} TOTAL)</div>
-        <div class="chunks-grid" id="chunksGrid_${task.id}"></div>
+        <div class="drawer-header">TRANSFER DETAILS</div>
+        <div class="media-drawer-content" style="padding: 10px 14px; font-size: 11.5px; color: var(--label-secondary); display: flex; flex-direction: column; gap: 5px; background: rgba(0,0,0,0.15); border-radius: 6px; margin: 8px 0;">
+          <div><b style="color: var(--label-primary);">Source URL:</b> <span style="word-break: break-all; color: var(--label-tertiary);">${task.url}</span></div>
+          <div><b style="color: var(--label-primary);">Saved To:</b> <span style="word-break: break-all; color: #38a5ff;">${task.filePath || task.destinationDirectory || 'Downloads'}</span></div>
+          <div><b style="color: var(--label-primary);">Status:</b> <span>${task.status} (${task.speed || 'Done'})</span></div>
+        </div>
+        ${task.chunks && task.chunks.length > 0 ? `
+          <div class="drawer-header" style="margin-top: 8px;">CONCURRENT STREAMS (${task.chunks.length} TOTAL)</div>
+          <div class="chunks-grid" id="chunksGrid_${task.id}"></div>
+        ` : ''}
       </div>
     `;
 
@@ -493,20 +505,45 @@
     });
 
     const openFileBtn = card.querySelector('.btn-open-file');
-    if (openFileBtn && task.filePath) {
-      openFileBtn.addEventListener('click', () => sendToHost('open_file', { filePath: task.filePath }));
+    if (openFileBtn) {
+      openFileBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const p = task.filePath || task.destinationDirectory;
+        if (p) {
+          sendToHost('open_file', { filePath: p });
+        } else {
+          showToast("File location not available.");
+        }
+      });
     }
 
     const openFolderBtn = card.querySelector('.btn-open-folder');
-    if (openFolderBtn && task.filePath) {
-      openFolderBtn.addEventListener('click', () => sendToHost('open_folder', { filePath: task.filePath }));
+    if (openFolderBtn) {
+      openFolderBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const p = task.filePath || task.destinationDirectory;
+        if (p) {
+          sendToHost('open_folder', { filePath: p });
+        } else {
+          showToast("Folder location not available.");
+        }
+      });
+    }
+
+    const removeBtn = card.querySelector('.btn-remove-task');
+    if (removeBtn) {
+      removeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        downloads.delete(task.id);
+        renderDownloads();
+      });
     }
 
     const pauseBtn = card.querySelector('.btn-pause');
     if (pauseBtn) {
       pauseBtn.addEventListener('click', () => {
-        sendToHost('pause_download', { downloadId: task.id });
-        task.status = 'Paused';
+        sendToHost('cancel_download', { downloadId: task.id });
+        task.status = 'Canceled';
         renderDownloads();
       });
     }
@@ -519,6 +556,12 @@
   function updateTaskCard(task) {
     const card = document.getElementById('taskCard_' + task.id);
     if (!card) {
+      renderDownloads();
+      return;
+    }
+
+    const statusPill = card.querySelector('.task-status-pill');
+    if (statusPill && statusPill.textContent !== task.status) {
       renderDownloads();
       return;
     }
@@ -582,9 +625,76 @@
   btnCloseModal.addEventListener('click', closeModal);
   btnCancelModal.addEventListener('click', closeModal);
 
-  btnPasteClipboard.addEventListener('click', () => {
+  btnPasteClipboard.addEventListener('click', async () => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        const text = await navigator.clipboard.readText();
+        if (text && text.trim()) {
+          handlePastedUrl(text.trim());
+          return;
+        }
+      }
+    } catch { }
+
     sendToHost('get_clipboard');
   });
+
+  function handlePastedUrl(rawText) {
+    if (!rawText || !rawText.trim()) {
+      showToast("Clipboard is empty or does not contain text.");
+      return;
+    }
+
+    let url = rawText.trim();
+    if (url.includes('\n')) {
+      url = url.split('\n')[0].trim();
+    }
+    url = url.replace(/^["']|["']$/g, '');
+
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      if (url.includes('.') && !url.includes(' ')) {
+        url = 'https://' + url;
+      } else {
+        showToast("Clipboard does not contain a valid URL.");
+        return;
+      }
+    }
+
+    const isMediaPane = document.getElementById('paneMedia').classList.contains('active');
+    const isMediaUrl = /youtube\.com|youtu\.be|vimeo\.com|tiktok\.com|twitter\.com|x\.com|twitch\.tv|soundcloud\.com|\.m3u8|\.mpd/i.test(url);
+
+    if (isMediaPane || isMediaUrl) {
+      const mediaTabBtn = document.querySelector('.nav-item[data-tab="media"]');
+      if (mediaTabBtn) mediaTabBtn.click();
+
+      mediaUrlInput.value = url;
+      showToast("Pasted media URL — inspecting streams...");
+      btnSniffMedia.click();
+    } else {
+      const dlTabBtn = document.querySelector('.nav-item[data-tab="downloads"]');
+      if (dlTabBtn) dlTabBtn.click();
+
+      modalUrl.value = url;
+      openModal();
+      triggerProbe(url);
+    }
+  }
+
+  function showToast(text, duration = 2800) {
+    let toast = document.getElementById('appleToast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'appleToast';
+      toast.className = 'apple-toast glass-panel';
+      document.body.appendChild(toast);
+    }
+    toast.textContent = text;
+    toast.classList.add('visible');
+    clearTimeout(toast._timer);
+    toast._timer = setTimeout(() => {
+      toast.classList.remove('visible');
+    }, duration);
+  }
 
   btnProbe.addEventListener('click', () => {
     triggerProbe(modalUrl.value.trim());
