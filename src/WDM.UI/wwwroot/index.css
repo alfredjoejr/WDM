@@ -372,6 +372,8 @@ body {
   width: 14px;
   height: 14px;
   fill: currentColor;
+  pointer-events: none;
+  transition: transform 0.2s ease;
 }
 
 .icon-btn:hover {

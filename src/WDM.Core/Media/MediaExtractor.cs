@@ -422,15 +422,36 @@ public sealed partial class MediaExtractor : IMediaExtractor
             throw new InvalidOperationException($"Media download failed (code {proc.ExitCode}): {err}");
         }
 
-        if (!string.IsNullOrWhiteSpace(downloadedFilePath) && File.Exists(downloadedFilePath))
+        if (!string.IsNullOrWhiteSpace(downloadedFilePath))
         {
-            return downloadedFilePath;
+            if (!Path.IsPathRooted(downloadedFilePath))
+            {
+                downloadedFilePath = Path.Combine(outDir, downloadedFilePath);
+            }
+
+            if (File.Exists(downloadedFilePath))
+            {
+                return downloadedFilePath;
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(outputFileName))
         {
-            var candidate = Path.Combine(outDir, outputFileName);
+            var clean = HttpProbe.SanitizeFileName(outputFileName);
+            var candidate = Path.Combine(outDir, clean);
             if (File.Exists(candidate)) return candidate;
+
+            var candMp4 = Path.Combine(outDir, $"{clean}.mp4");
+            if (File.Exists(candMp4)) return candMp4;
+
+            var candMp3 = Path.Combine(outDir, $"{clean}.mp3");
+            if (File.Exists(candMp3)) return candMp3;
+
+            var candWithoutExt = Path.Combine(outDir, Path.GetFileNameWithoutExtension(clean) + ".mp4");
+            if (File.Exists(candWithoutExt)) return candWithoutExt;
+
+            var candWithoutExtMp3 = Path.Combine(outDir, Path.GetFileNameWithoutExtension(clean) + ".mp3");
+            if (File.Exists(candWithoutExtMp3)) return candWithoutExtMp3;
         }
 
         try

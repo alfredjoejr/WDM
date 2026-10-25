@@ -42,22 +42,36 @@ public partial class MainWindow : Window
             var webViewDataDir = Path.Combine(localAppData, "WDM", "WebView2Data");
             Directory.CreateDirectory(webViewDataDir);
 
+            // Clean up old temporary session folders from previous runs in the background
+            _ = Task.Run(() => CleanupOldSessionFolders(localAppData));
+
             CoreWebView2Environment env;
             try
             {
                 env = await CoreWebView2Environment.CreateAsync(null, webViewDataDir);
+                await WebView.EnsureCoreWebView2Async(env);
             }
-            catch
+            catch (Exception ex)
             {
-                // If previous instance abruptly closed or locked, fallback to clean session folder
-                var fallbackDir = Path.Combine(localAppData, "WDM", $"WebView2_{Guid.NewGuid():N}");
+                // If primary folder is locked by another instance or hung process, seamlessly fall back to an isolated session directory
+                System.Diagnostics.Debug.WriteLine($"[WebView2 primary folder locked (0x800700AA), falling back to isolated session]: {ex.Message}");
+                var fallbackDir = Path.Combine(localAppData, "WDM", $"WebView2_Session_{Environment.ProcessId}");
                 Directory.CreateDirectory(fallbackDir);
                 env = await CoreWebView2Environment.CreateAsync(null, fallbackDir);
+                await WebView.EnsureCoreWebView2Async(env);
             }
 
-            await WebView.EnsureCoreWebView2Async(env);
             WebView.CoreWebView2.Settings.IsStatusBarEnabled = false;
             WebView.CoreWebView2.Settings.AreDevToolsEnabled = true;
+
+            // Automatically grant clipboard read permissions so web code can read clipboard seamlessly
+            WebView.CoreWebView2.PermissionRequested += (s, args) =>
+            {
+                if (args.PermissionKind == CoreWebView2PermissionKind.ClipboardRead)
+                {
+                    args.State = CoreWebView2PermissionState.Allow;
+                }
+            };
 
             WebView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
 
@@ -75,6 +89,37 @@ public partial class MainWindow : Window
         {
             MessageBox.Show($"Failed to initialize WebView2: {ex.Message}", "WDM Initialization Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        base.OnClosed(e);
+        try
+        {
+            WebView?.Dispose();
+        }
+        catch { }
+        Environment.Exit(0);
+    }
+
+    private static void CleanupOldSessionFolders(string localAppData)
+    {
+        try
+        {
+            var wdmDir = Path.Combine(localAppData, "WDM");
+            if (!Directory.Exists(wdmDir)) return;
+
+            var dirs = Directory.GetDirectories(wdmDir, "WebView2_Session_*");
+            foreach (var d in dirs)
+            {
+                try
+                {
+                    Directory.Delete(d, true);
+                }
+                catch { }
+            }
+        }
+        catch { }
     }
 
     private async void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
@@ -294,11 +339,19 @@ public partial class MainWindow : Window
         {
             if (File.Exists(path))
             {
-                Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = path,
+                    UseShellExecute = true
+                });
             }
             else if (Directory.Exists(path))
             {
-                Process.Start("explorer.exe", $"\"{path}\"");
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = path,
+                    UseShellExecute = true
+                });
             }
         }
         catch (Exception ex)
@@ -316,11 +369,20 @@ public partial class MainWindow : Window
         {
             if (File.Exists(path))
             {
-                Process.Start("explorer.exe", $"/select,\"{path}\"");
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = $"/select,\"{path}\"",
+                    UseShellExecute = true
+                });
             }
             else if (Directory.Exists(path))
             {
-                Process.Start("explorer.exe", $"\"{path}\"");
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = path,
+                    UseShellExecute = true
+                });
             }
         }
         catch (Exception ex)
@@ -467,19 +529,31 @@ public partial class MainWindow : Window
         Dispatcher.Invoke(() =>
         {
             string? text = null;
-            for (int i = 0; i < 5; i++)
+            for (int i = 0; i < 8; i++)
             {
                 try
                 {
-                    if (Clipboard.ContainsText())
+                    var data = Clipboard.GetDataObject();
+                    if (data != null)
                     {
-                        text = Clipboard.GetText();
+                        if (data.GetDataPresent(DataFormats.UnicodeText))
+                        {
+                            text = data.GetData(DataFormats.UnicodeText) as string;
+                        }
+                        else if (data.GetDataPresent(DataFormats.Text))
+                        {
+                            text = data.GetData(DataFormats.Text) as string;
+                        }
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
                         break;
                     }
                 }
                 catch
                 {
-                    Thread.Sleep(30);
+                    Thread.Sleep(40);
                 }
             }
             PostToWeb(new { requestId, action = "clipboard_result", text });

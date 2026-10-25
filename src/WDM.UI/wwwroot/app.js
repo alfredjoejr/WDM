@@ -329,6 +329,7 @@
           id: msg.downloadId,
           url: msg.url,
           fileName: msg.fileName || (msg.title || 'Media Video') + '.mp4',
+          destinationDirectory: msg.destinationDirectory,
           status: 'Downloading',
           percentage: 0,
           speed: 'Catching Stream',
@@ -499,9 +500,13 @@
 
     const toggleBtn = card.querySelector('.btn-drawer-toggle');
     const drawer = card.querySelector('.task-drawer');
-    toggleBtn.addEventListener('click', () => {
+    const chevronSvg = toggleBtn.querySelector('svg');
+    toggleBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
       drawer.classList.toggle('open');
-      toggleBtn.style.transform = drawer.classList.contains('open') ? 'rotate(180deg)' : 'rotate(0deg)';
+      if (chevronSvg) {
+        chevronSvg.style.transform = drawer.classList.contains('open') ? 'rotate(180deg)' : 'rotate(0deg)';
+      }
     });
 
     const openFileBtn = card.querySelector('.btn-open-file');
@@ -511,8 +516,9 @@
         const p = task.filePath || task.destinationDirectory;
         if (p) {
           sendToHost('open_file', { filePath: p });
+          showToast("Opening file...");
         } else {
-          showToast("File location not available.");
+          showToast("File location not available yet.");
         }
       });
     }
@@ -524,8 +530,9 @@
         const p = task.filePath || task.destinationDirectory;
         if (p) {
           sendToHost('open_folder', { filePath: p });
+          showToast("Opening folder in File Explorer...");
         } else {
-          showToast("Folder location not available.");
+          showToast("Folder location not available yet.");
         }
       });
     }
