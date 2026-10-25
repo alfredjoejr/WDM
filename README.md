@@ -1,7 +1,12 @@
-# WDM (Windows Download Manager)
-*Next-Generation Open-Source Parallel Download Manager for Windows & Web*
+<p align="center">
+  <img src="assets/logo.png" width="128" height="128" alt="WDM Logo" style="border-radius: 24px;" />
+</p>
 
-WDM is a modern, high-speed open-source alternative to Internet Download Manager (IDM), built on **.NET 10** with native HTTP/3 support, dynamic multi-connection chunking, and **zero-stitch direct concurrent disk writes**.
+<h1 align="center">WDM — Windows Download Manager</h1>
+<p align="center"><b>Next-Generation Open-Source Parallel Download Manager for Windows & Web</b></p>
+<p align="center">
+  Developed by <b>Joash</b> &bull; <a href="mailto:alfredjoejr@duck.com">alfredjoejr@duck.com</a> &bull; <a href="https://github.com/alfredjoejr/WDM">GitHub</a>
+</p>
 
 ---
 
