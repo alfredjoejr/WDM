@@ -17,7 +17,8 @@ public static class HostInstaller
     [
         ("Google Chrome", @"Software\Google\Chrome\NativeMessagingHosts"),
         ("Microsoft Edge", @"Software\Microsoft\Edge\NativeMessagingHosts"),
-        ("Mozilla Firefox", @"Software\Mozilla\NativeMessagingHosts")
+        ("Mozilla Firefox", @"Software\Mozilla\NativeMessagingHosts"),
+        ("Mozilla Firefox (Wow6432)", @"Software\Wow6432Node\Mozilla\NativeMessagingHosts")
     ];
 
     public static string GetManifestPath()
@@ -29,11 +30,33 @@ public static class HostInstaller
 
     public static bool Install(string? customExePath = null)
     {
-        var exePath = customExePath ?? Process.GetCurrentProcess().MainModule?.FileName;
-        if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath))
+        var sourceExePath = customExePath ?? Process.GetCurrentProcess().MainModule?.FileName;
+        if (string.IsNullOrWhiteSpace(sourceExePath) || !File.Exists(sourceExePath))
         {
             Console.Error.WriteLine("Error: Could not locate native host executable path.");
             return false;
+        }
+
+        var appData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WDM");
+        var targetHostDir = Path.Combine(appData, "NativeHost");
+        Directory.CreateDirectory(targetHostDir);
+
+        // Copy binary and its dependencies to LocalAppData (outside OneDrive)
+        var sourceDir = Path.GetDirectoryName(sourceExePath)!;
+        var targetExePath = Path.Combine(targetHostDir, Path.GetFileName(sourceExePath));
+
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(sourceDir, "*.*"))
+            {
+                var dest = Path.Combine(targetHostDir, Path.GetFileName(file));
+                File.Copy(file, dest, overwrite: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Notice] Could not mirror all files to {targetHostDir}: {ex.Message}");
+            targetExePath = sourceExePath; // fallback
         }
 
         var manifestPath = GetManifestPath();
@@ -43,7 +66,7 @@ public static class HostInstaller
         {
             name = HostName,
             description = "WDM High-Speed Download Manager Native Messaging Host",
-            path = exePath,
+            path = targetExePath,
             type = "stdio",
             allowed_origins = new[]
             {
@@ -51,7 +74,10 @@ public static class HostInstaller
             },
             allowed_extensions = new[]
             {
-                "wdm-downloader@local"
+                "wdm-downloader@local",
+                "2a3e3cb2-c5c7-46b3-bc78-fae08fc0f578",
+                "{2a3e3cb2-c5c7-46b3-bc78-fae08fc0f578}",
+                "2a3e3cb2-c5c7-46b3-bc78-fae08fc0f578@temporary-addon"
             }
         };
 
@@ -76,6 +102,7 @@ public static class HostInstaller
         }
 
         Console.WriteLine($"[✓] Host Manifest generated at: {manifestPath}");
+        Console.WriteLine($"[✓] Target binary deployed at: {targetExePath}");
         return allSucceeded;
     }
 
