@@ -134,11 +134,13 @@ function handleNativeMessage(msg) {
 
 function updateBadge() {
   const count = activeDownloads.size;
+  const actionApi = chrome.action || chrome.browserAction;
+  if (!actionApi) return;
   if (count > 0) {
-    chrome.action.setBadgeText({ text: count.toString() });
-    chrome.action.setBadgeBackgroundColor({ color: "#00d2ff" });
+    actionApi.setBadgeText({ text: count.toString() });
+    actionApi.setBadgeBackgroundColor({ color: "#00d2ff" });
   } else {
-    chrome.action.setBadgeText({ text: "" });
+    actionApi.setBadgeText({ text: "" });
   }
 }
 
@@ -148,28 +150,36 @@ function notifyPopup(message) {
   });
 }
 
-// Download Interception
-chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
+// Download Interception (Chrome: onDeterminingFilename, Firefox: onCreated)
+function handleDownloadIntercept(item) {
+  if (!item || !item.url) return;
+
   chrome.storage.local.get(["interceptDownloads", "connections"], async (settings) => {
     if (!settings.interceptDownloads) {
       return; // Interception disabled
     }
 
     // Ignore blob/data/internal downloads
-    if (item.url.startsWith("blob:") || item.url.startsWith("data:") || item.url.startsWith("chrome://")) {
+    if (item.url.startsWith("blob:") || item.url.startsWith("data:") || item.url.startsWith("chrome://") || item.url.startsWith("about:")) {
       return;
     }
 
     // Cancel native browser download
-    chrome.downloads.cancel(item.id, () => {
-      chrome.downloads.erase({ id: item.id });
-    });
+    try {
+      chrome.downloads.cancel(item.id, () => {
+        try {
+          chrome.downloads.erase({ id: item.id });
+        } catch { }
+      });
+    } catch { }
 
     // Gather domain cookies to authenticate download
     let cookieHeader = "";
     try {
-      const cookies = await chrome.cookies.getAll({ url: item.url });
-      cookieHeader = cookies.map(c => `${c.name}=${c.value}`).join("; ");
+      if (chrome.cookies && chrome.cookies.getAll) {
+        const cookies = await chrome.cookies.getAll({ url: item.url });
+        cookieHeader = cookies.map(c => `${c.name}=${c.value}`).join("; ");
+      }
     } catch (e) {
       console.warn("Could not retrieve cookies:", e);
     }
@@ -179,7 +189,7 @@ chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
       await sendNativeMessage({
         action: "start_download",
         url: item.url,
-        fileName: item.filename,
+        fileName: item.filename || "",
         connections: settings.connections || 16,
         headers: {
           "Cookie": cookieHeader,
@@ -191,7 +201,19 @@ chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
       console.error("Failed to forward download to WDM:", err);
     }
   });
-});
+}
+
+if (chrome.downloads) {
+  if (chrome.downloads.onDeterminingFilename) {
+    chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
+      handleDownloadIntercept(item);
+    });
+  } else if (chrome.downloads.onCreated) {
+    chrome.downloads.onCreated.addListener((item) => {
+      handleDownloadIntercept(item);
+    });
+  }
+}
 
 // Context Menu Click Handling
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
