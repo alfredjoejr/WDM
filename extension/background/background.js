@@ -245,8 +245,21 @@ chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
   }
 
   if (req.action === "download_media") {
-    sendNativeMessage({ action: "download_media", url: req.url, formatId: req.formatId })
+    sendNativeMessage({
+      action: "download_media",
+      url: req.url,
+      formatId: req.formatId,
+      fileName: req.fileName,
+      isAudioOnly: req.isAudioOnly || false
+    })
       .then(res => sendResponse(res))
+      .catch(err => sendResponse({ success: false, message: err.message }));
+    return true;
+  }
+
+  if (req.action === "open_app") {
+    sendNativeMessage({ action: "open_app" })
+      .then(res => sendResponse({ success: true }))
       .catch(err => sendResponse({ success: false, message: err.message }));
     return true;
   }

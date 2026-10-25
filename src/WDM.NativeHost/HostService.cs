@@ -53,6 +53,11 @@ public sealed class HostService
                     await HandleDownloadMediaAsync(root, requestId, cancellationToken);
                     break;
 
+                case "open_app":
+                    HandleOpenApp(root);
+                    await HostProtocol.SendMessageAsync(new { requestId, success = true }, cancellationToken);
+                    break;
+
                 default:
                     await HostProtocol.SendMessageAsync(new
                     {
@@ -222,6 +227,9 @@ public sealed class HostService
     {
         var url = root.GetProperty("url").GetString()!;
         var formatId = root.TryGetProperty("formatId", out var fProp) ? fProp.GetString() : null;
+        var fileName = root.TryGetProperty("fileName", out var fnProp) ? fnProp.GetString() : null;
+        var isAudioOnly = root.TryGetProperty("isAudioOnly", out var aoProp) && aoProp.GetBoolean();
+        var destinationDirectory = root.TryGetProperty("destinationDirectory", out var dProp) ? dProp.GetString() : null;
 
         var downloadId = Guid.NewGuid().ToString("N");
 
@@ -236,9 +244,12 @@ public sealed class HostService
         {
             try
             {
-                var targetDir = await _mediaExtractor.DownloadMediaAsync(
+                var completedPath = await _mediaExtractor.DownloadMediaAsync(
                     url,
                     formatId,
+                    destinationDirectory,
+                    fileName,
+                    isAudioOnly,
                     progressCallback: async (percent, line) =>
                     {
                         await HostProtocol.SendMessageAsync(new
@@ -255,7 +266,8 @@ public sealed class HostService
                 {
                     action = "media_download_completed",
                     downloadId,
-                    destinationDirectory = targetDir
+                    filePath = completedPath,
+                    destinationDirectory = Path.GetDirectoryName(completedPath) ?? targetDirOrNull(completedPath)
                 });
             }
             catch (Exception ex)
@@ -268,5 +280,31 @@ public sealed class HostService
                 });
             }
         }, ct);
+    }
+
+    private static string targetDirOrNull(string path) => Directory.Exists(path) ? path : (Path.GetDirectoryName(path) ?? string.Empty);
+
+    private static void HandleOpenApp(JsonElement root)
+    {
+        try
+        {
+            var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            var candidates = new[]
+            {
+                Path.Combine(baseDir, "..", "WDM.UI.exe"),
+                Path.Combine(baseDir, "WDM.UI.exe"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WDM", "WDM.UI.exe")
+            };
+
+            foreach (var path in candidates)
+            {
+                if (File.Exists(path))
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
+                    return;
+                }
+            }
+        }
+        catch { }
     }
 }
