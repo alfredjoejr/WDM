@@ -3,6 +3,12 @@
   "name": "WDM - Windows Download Manager",
   "version": "1.0.0",
   "description": "Next-Gen multi-connection parallel download manager and media sniffer integrated with WDM .NET 10 engine.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "wdm-downloader@local",
+      "strict_min_version": "109.0"
+    }
+  },
   "permissions": [
     "downloads",
     "nativeMessaging",
