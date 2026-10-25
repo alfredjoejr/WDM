@@ -47,6 +47,8 @@
   const mediaUploader = document.getElementById('mediaUploader');
   const mediaDuration = document.getElementById('mediaDuration');
   const formatsGrid = document.getElementById('formatsGrid');
+  const mediaErrorBanner = document.getElementById('mediaErrorBanner');
+  const mediaErrorText = document.getElementById('mediaErrorText');
 
   // Benchmark Tab
   const btnRunBenchmark = document.getElementById('btnRunBenchmark');
@@ -304,6 +306,58 @@
         }
         break;
 
+      case 'media_download_started':
+        downloads.set(msg.downloadId, {
+          id: msg.downloadId,
+          url: msg.url,
+          fileName: (msg.title || 'Media Video') + '.mp4',
+          status: 'Downloading',
+          percentage: 0,
+          speed: 'Catching Stream',
+          speedBytes: 0,
+          downloaded: '0 B',
+          total: 'Media Stream',
+          eta: '--:--',
+          chunks: []
+        });
+        renderDownloads();
+        break;
+
+      case 'media_download_progress':
+        if (downloads.has(msg.downloadId)) {
+          const task = downloads.get(msg.downloadId);
+          task.status = 'Downloading';
+          if (msg.percentage >= 0) {
+            task.percentage = msg.percentage;
+          }
+          if (msg.status) {
+            task.speed = msg.status.replace(/\[download\]\s*/, '').trim();
+          }
+          updateTaskCard(task);
+        }
+        break;
+
+      case 'media_download_completed':
+        if (downloads.has(msg.downloadId)) {
+          const task = downloads.get(msg.downloadId);
+          task.status = 'Completed';
+          task.percentage = 100;
+          task.speed = 'Completed';
+          task.speedBytes = 0;
+          task.filePath = msg.destinationDirectory;
+          renderDownloads();
+        }
+        break;
+
+      case 'media_download_failed':
+        if (downloads.has(msg.downloadId)) {
+          const task = downloads.get(msg.downloadId);
+          task.status = 'Failed';
+          task.error = msg.error;
+          renderDownloads();
+        }
+        break;
+
       case 'clipboard_result':
         if (msg.text && (msg.text.startsWith('http://') || msg.text.startsWith('https://'))) {
           modalUrl.value = msg.text;
@@ -546,33 +600,58 @@
     const url = mediaUrlInput.value.trim();
     if (!url) return;
 
+    if (mediaErrorBanner) mediaErrorBanner.style.display = 'none';
     btnSniffMedia.textContent = 'Inspecting...';
     btnSniffMedia.disabled = true;
 
-    const res = await sendToHost('sniff_media', { url });
-    btnSniffMedia.textContent = 'Inspect Streams';
-    btnSniffMedia.disabled = false;
+    try {
+      const res = await sendToHost('sniff_media', { url });
+      btnSniffMedia.textContent = 'Inspect Streams';
+      btnSniffMedia.disabled = false;
 
-    if (res && res.success && res.data) {
-      mediaResultBox.style.display = 'block';
-      mediaTitle.textContent = res.data.title;
-      mediaUploader.textContent = res.data.uploader || 'Creator';
-      mediaDuration.textContent = res.data.duration || '00:00';
-      if (res.data.thumbnail) mediaThumbnail.src = res.data.thumbnail;
+      if (res && res.success && res.data) {
+        if (mediaErrorBanner) mediaErrorBanner.style.display = 'none';
+        mediaResultBox.style.display = 'block';
+        mediaTitle.textContent = res.data.title || 'Video';
+        mediaUploader.textContent = res.data.uploader || 'Creator';
+        mediaDuration.textContent = res.data.duration || '00:00';
+        if (res.data.thumbnail) {
+          mediaThumbnail.src = res.data.thumbnail;
+          mediaThumbnail.style.display = 'block';
+        } else {
+          mediaThumbnail.style.display = 'none';
+        }
 
-      formatsGrid.innerHTML = '';
-      (res.data.formats || []).forEach(f => {
-        const btn = document.createElement('button');
-        btn.className = 'format-btn';
-        btn.textContent = `${f.resolution} (${f.extension || 'mp4'})`;
-        btn.addEventListener('click', () => {
-          sendToHost('download_media', { url, formatId: f.formatId });
-          alert(`Starting download for ${f.resolution}...`);
+        formatsGrid.innerHTML = '';
+        (res.data.formats || []).forEach(f => {
+          const btn = document.createElement('button');
+          btn.className = 'format-btn' + (f.isAudioOnly ? ' audio-btn' : '');
+          const icon = f.isAudioOnly ? '🎵' : '🎬';
+          const sizeStr = f.fileSizeBytes ? ` (${formatBytes(f.fileSizeBytes)})` : '';
+          btn.innerHTML = `<span>${icon}</span> <span>${f.resolution} • ${f.extension.toUpperCase()}${sizeStr}</span>`;
+          btn.addEventListener('click', () => {
+            sendToHost('download_media', { url, formatId: f.formatId, title: res.data.title });
+            // Switch to Downloads tab to see download progress immediately
+            const dlTab = document.querySelector('[data-tab="paneDownloads"]');
+            if (dlTab) dlTab.click();
+          });
+          formatsGrid.appendChild(btn);
         });
-        formatsGrid.appendChild(btn);
-      });
-    } else {
-      alert("Could not extract streams. Make sure yt-dlp is installed and the URL is accessible.");
+      } else {
+        mediaResultBox.style.display = 'none';
+        if (mediaErrorBanner) {
+          mediaErrorBanner.style.display = 'flex';
+          mediaErrorText.textContent = res?.message || "Could not extract streams. Make sure the URL is accessible.";
+        }
+      }
+    } catch (err) {
+      btnSniffMedia.textContent = 'Inspect Streams';
+      btnSniffMedia.disabled = false;
+      mediaResultBox.style.display = 'none';
+      if (mediaErrorBanner) {
+        mediaErrorBanner.style.display = 'flex';
+        mediaErrorText.textContent = err?.message || "Failed to communicate with media extractor service.";
+      }
     }
   });
 

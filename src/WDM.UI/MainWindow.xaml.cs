@@ -281,45 +281,53 @@ public partial class MainWindow : Window
     private async Task HandleSniffMediaAsync(JsonElement root, string? requestId)
     {
         var url = root.GetProperty("url").GetString()!;
-        var meta = await _mediaExtractor.ExtractMetadataAsync(url);
-
-        if (meta == null)
+        try
         {
-            PostToWeb(new { requestId, action = "sniff_media_result", success = false });
-            return;
-        }
+            var meta = await _mediaExtractor.ExtractMetadataAsync(url);
 
-        PostToWeb(new
-        {
-            requestId,
-            action = "sniff_media_result",
-            success = true,
-            data = new
+            if (meta == null)
             {
-                title = meta.Title,
-                uploader = meta.Uploader,
-                thumbnail = meta.ThumbnailUrl,
-                duration = meta.Duration.HasValue ? $"{meta.Duration.Value:hh\\:mm\\:ss}" : null,
-                formats = meta.Formats.Select(f => new
-                {
-                    formatId = f.FormatId,
-                    resolution = f.Resolution,
-                    extension = f.Extension,
-                    fileSizeBytes = f.FileSizeBytes,
-                    note = f.Note,
-                    isAudioOnly = f.IsAudioOnly
-                })
+                PostToWeb(new { requestId, action = "sniff_media_result", success = false, message = "Could not extract stream formats. Please verify the URL." });
+                return;
             }
-        });
+
+            PostToWeb(new
+            {
+                requestId,
+                action = "sniff_media_result",
+                success = true,
+                data = new
+                {
+                    title = meta.Title,
+                    uploader = meta.Uploader,
+                    thumbnail = meta.ThumbnailUrl,
+                    duration = meta.Duration.HasValue ? $"{meta.Duration.Value:hh\\:mm\\:ss}" : null,
+                    formats = meta.Formats.Select(f => new
+                    {
+                        formatId = f.FormatId,
+                        resolution = f.Resolution,
+                        extension = f.Extension,
+                        fileSizeBytes = f.FileSizeBytes,
+                        note = f.Note,
+                        isAudioOnly = f.IsAudioOnly
+                    })
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            PostToWeb(new { requestId, action = "sniff_media_result", success = false, message = ex.Message });
+        }
     }
 
     private async Task HandleDownloadMediaAsync(JsonElement root, string? requestId)
     {
         var url = root.GetProperty("url").GetString()!;
         var formatId = root.TryGetProperty("formatId", out var fProp) ? fProp.GetString() : null;
+        var title = root.TryGetProperty("title", out var tProp) ? tProp.GetString() : "Media Video";
         var downloadId = Guid.NewGuid().ToString("N");
 
-        PostToWeb(new { requestId, action = "media_download_started", downloadId });
+        PostToWeb(new { requestId, action = "media_download_started", downloadId, url, title, formatId });
 
         _ = Task.Run(async () =>
         {

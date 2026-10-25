@@ -123,4 +123,16 @@ public class EngineTests : IDisposable
         var result = HttpProbe.SanitizeFileName(input);
         Assert.Equal(expected, result);
     }
+
+    [Fact]
+    public async Task MediaExtractor_FindsBinaryAndValidatesSupport()
+    {
+        var extractor = new WDM.Core.Media.MediaExtractor();
+        Assert.True(extractor.IsSupported("https://www.youtube.com/watch?v=9p3NV1L1AJA"));
+        Assert.True(extractor.IsSupported("https://example.com/stream.m3u8"));
+        Assert.False(extractor.IsSupported("https://example.com/file.zip"));
+
+        var isAvailable = await extractor.IsEngineAvailableAsync();
+        Assert.True(isAvailable);
+    }
 }
