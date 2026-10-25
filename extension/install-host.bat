@@ -7,10 +7,9 @@ echo.
 
 set EXE_PATH=%~dp0..\bin\NativeHost\WDM.NativeHost.exe
 
-if not exist "%EXE_PATH%" (
-    echo Building and publishing WDM.NativeHost...
-    dotnet publish "%~dp0..\src\WDM.NativeHost\WDM.NativeHost.csproj" -c Release -o "%~dp0..\bin\NativeHost"
-)
+echo Building and publishing latest WDM.NativeHost...
+dotnet publish "%~dp0..\src\WDM.NativeHost\WDM.NativeHost.csproj" -c Release -o "%~dp0..\bin\NativeHost"
+
 
 if exist "%EXE_PATH%" (
     echo Registering Native Messaging Host for Chrome, Edge, and Firefox...

@@ -72,7 +72,7 @@ function sendNativeMessage(msg) {
     pendingRequests.set(requestId, { resolve, reject, timeout: setTimeout(() => {
       pendingRequests.delete(requestId);
       reject(new Error("Native host request timed out"));
-    }, 15000) });
+    }, 45000) });
 
     try {
       port.postMessage(msg);

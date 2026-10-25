@@ -166,8 +166,13 @@
       e.stopPropagation();
       e.preventDefault();
       wrapper.classList.toggle('open');
-      if (wrapper.classList.contains('open') && !cachedStreams && !isSniffing) {
-        triggerStreamSniffer();
+      if (wrapper.classList.contains('open')) {
+        if (!cachedStreams) {
+          showLoadingSpinner();
+          if (!isSniffing) {
+            triggerStreamSniffer(true);
+          }
+        }
       }
     });
 
@@ -233,10 +238,24 @@
     triggerStreamSniffer();
   }
 
-  function triggerStreamSniffer() {
-    const pageUrl = window.location.href;
-    if (pageUrl === currentVideoUrl && cachedStreams) return;
+  function showLoadingSpinner() {
+    if (!activeHooker) return;
+    const menuBody = activeHooker.querySelector('.wdm-menu-body');
+    if (menuBody) {
+      menuBody.innerHTML = `
+        <div class="wdm-loading-streams">
+          <div class="wdm-spinner"></div>
+          <span>Sniffing video & audio streams...</span>
+        </div>
+      `;
+    }
+  }
 
+  function triggerStreamSniffer(force = false) {
+    const pageUrl = window.location.href;
+    if (!force && pageUrl === currentVideoUrl && cachedStreams) return;
+
+    if (force) cachedStreams = null;
     currentVideoUrl = pageUrl;
     isSniffing = true;
 
@@ -245,6 +264,9 @@
       const countBadge = activeHooker.querySelector('.wdm-file-count');
       if (tooltipText) tooltipText.textContent = "Checking streams with WDM...";
       if (countBadge) countBadge.style.display = 'none';
+      if (activeHooker.classList.contains('open')) {
+        showLoadingSpinner();
+      }
     }
 
     chrome.runtime.sendMessage({
@@ -255,10 +277,11 @@
 
       if (!activeHooker) return;
 
-      if (res && res.success && res.data) {
+      if (res && res.success && res.data && res.data.formats && res.data.formats.length > 0) {
         cachedStreams = res.data;
         updateHookerUI(res.data);
       } else {
+        console.warn("[WDM] Stream sniff result:", res);
         // Fallback: direct HTML5 stream detection
         fallbackHtml5Detection();
       }
@@ -282,10 +305,19 @@
       const menuBody = activeHooker.querySelector('.wdm-menu-body');
       if (menuBody) {
         menuBody.innerHTML = `
-          <div style="padding: 12px; text-align: center; color: #94a3b8; font-size: 11px;">
-            Ready to download with WDM.<br>Click Quick Download below.
+          <div style="padding: 14px 10px; text-align: center; color: #94a3b8; font-size: 11px;">
+            <span>Ready to download with WDM.</span><br>
+            <button class="wdm-retry-sniff-btn" style="margin-top: 8px; padding: 4px 12px; background: rgba(0,113,227,0.2); border: 1px solid rgba(0,113,227,0.5); color: #38bdf8; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 500;">↻ Retry Sniffing Formats</button>
           </div>
         `;
+        const retryBtn = menuBody.querySelector('.wdm-retry-sniff-btn');
+        if (retryBtn) {
+          retryBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            showLoadingSpinner();
+            triggerStreamSniffer(true);
+          });
+        }
       }
     }
   }
