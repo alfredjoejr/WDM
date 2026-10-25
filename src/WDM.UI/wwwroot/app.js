@@ -46,9 +46,27 @@
   const mediaTitle = document.getElementById('mediaTitle');
   const mediaUploader = document.getElementById('mediaUploader');
   const mediaDuration = document.getElementById('mediaDuration');
-  const formatsGrid = document.getElementById('formatsGrid');
+  const videoFormatsGrid = document.getElementById('videoFormatsGrid');
+  const audioFormatsGrid = document.getElementById('audioFormatsGrid');
+  const videoStreamGroup = document.getElementById('videoStreamGroup');
+  const audioStreamGroup = document.getElementById('audioStreamGroup');
   const mediaErrorBanner = document.getElementById('mediaErrorBanner');
   const mediaErrorText = document.getElementById('mediaErrorText');
+
+  // Media Download Modal
+  const mediaDownloadModal = document.getElementById('mediaDownloadModal');
+  const btnCancelMediaModal = document.getElementById('btnCancelMediaModal');
+  const btnCancelMediaDownload = document.getElementById('btnCancelMediaDownload');
+  const btnConfirmMediaDownload = document.getElementById('btnConfirmMediaDownload');
+  const mediaModalFormatBadge = document.getElementById('mediaModalFormatBadge');
+  const mediaModalSize = document.getElementById('mediaModalSize');
+  const mediaModalFileName = document.getElementById('mediaModalFileName');
+  const mediaModalSavePath = document.getElementById('mediaModalSavePath');
+  const btnBrowseMediaLocation = document.getElementById('btnBrowseMediaLocation');
+  const chkRememberLocation = document.getElementById('chkRememberLocation');
+
+  let defaultDownloadDirectory = '';
+  let currentMediaTarget = null;
 
   // Benchmark Tab
   const btnRunBenchmark = document.getElementById('btnRunBenchmark');
@@ -310,7 +328,7 @@
         downloads.set(msg.downloadId, {
           id: msg.downloadId,
           url: msg.url,
-          fileName: (msg.title || 'Media Video') + '.mp4',
+          fileName: msg.fileName || (msg.title || 'Media Video') + '.mp4',
           status: 'Downloading',
           percentage: 0,
           speed: 'Catching Stream',
@@ -355,6 +373,22 @@
           task.status = 'Failed';
           task.error = msg.error;
           renderDownloads();
+        }
+        break;
+
+      case 'browse_folder_result':
+        if (msg.success && msg.folderPath) {
+          mediaModalSavePath.value = msg.folderPath;
+        }
+        break;
+
+      case 'default_folder_result':
+        if (msg.folderPath) {
+          defaultDownloadDirectory = msg.folderPath;
+          if (!mediaModalSavePath.value) {
+            const remembered = localStorage.getItem('wdm_last_save_location');
+            mediaModalSavePath.value = remembered || defaultDownloadDirectory;
+          }
         }
         break;
 
@@ -622,21 +656,32 @@
           mediaThumbnail.style.display = 'none';
         }
 
-        formatsGrid.innerHTML = '';
-        (res.data.formats || []).forEach(f => {
-          const btn = document.createElement('button');
-          btn.className = 'format-btn' + (f.isAudioOnly ? ' audio-btn' : '');
-          const icon = f.isAudioOnly ? '🎵' : '🎬';
-          const sizeStr = f.fileSizeBytes ? ` (${formatBytes(f.fileSizeBytes)})` : '';
-          btn.innerHTML = `<span>${icon}</span> <span>${f.resolution} • ${f.extension.toUpperCase()}${sizeStr}</span>`;
-          btn.addEventListener('click', () => {
-            sendToHost('download_media', { url, formatId: f.formatId, title: res.data.title });
-            // Switch to Downloads tab to see download progress immediately
-            const dlTab = document.querySelector('[data-tab="paneDownloads"]');
-            if (dlTab) dlTab.click();
+        const allFormats = res.data.formats || [];
+        const videoFormats = allFormats.filter(f => !f.isAudioOnly);
+        const audioFormats = allFormats.filter(f => f.isAudioOnly);
+
+        videoFormatsGrid.innerHTML = '';
+        audioFormatsGrid.innerHTML = '';
+
+        if (videoFormats.length > 0) {
+          videoStreamGroup.style.display = 'block';
+          videoFormats.forEach(f => {
+            const btn = createStreamButton(f, false, res.data.title, url);
+            videoFormatsGrid.appendChild(btn);
           });
-          formatsGrid.appendChild(btn);
-        });
+        } else {
+          videoStreamGroup.style.display = 'none';
+        }
+
+        if (audioFormats.length > 0) {
+          audioStreamGroup.style.display = 'block';
+          audioFormats.forEach(f => {
+            const btn = createStreamButton(f, true, res.data.title, url);
+            audioFormatsGrid.appendChild(btn);
+          });
+        } else {
+          audioStreamGroup.style.display = 'none';
+        }
       } else {
         mediaResultBox.style.display = 'none';
         if (mediaErrorBanner) {
@@ -654,6 +699,93 @@
       }
     }
   });
+
+  function createStreamButton(f, isAudio, title, url) {
+    const btn = document.createElement('button');
+    btn.className = 'format-btn' + (isAudio ? ' audio-btn' : '');
+    const icon = isAudio ? '🎵' : '🎬';
+    const sizeStr = f.fileSizeBytes ? ` (${formatBytes(f.fileSizeBytes)})` : '';
+    btn.innerHTML = `<span>${icon}</span> <span>${f.resolution} • ${f.extension.toUpperCase()}${sizeStr}</span>`;
+    btn.addEventListener('click', () => {
+      openMediaDownloadModal({
+        url: url,
+        formatId: f.formatId,
+        resolution: f.resolution,
+        extension: f.extension || (isAudio ? 'mp3' : 'mp4'),
+        fileSizeBytes: f.fileSizeBytes,
+        sizeStr: sizeStr,
+        isAudioOnly: isAudio,
+        title: title || 'Media Video'
+      });
+    });
+    return btn;
+  }
+
+  function openMediaDownloadModal(target) {
+    currentMediaTarget = target;
+    mediaModalFormatBadge.textContent = `${target.resolution} • ${target.extension.toUpperCase()}`;
+    mediaModalFormatBadge.className = 'status-pill ' + (target.isAudioOnly ? 'green' : 'blue');
+    mediaModalSize.textContent = target.sizeStr ? target.sizeStr.replace(/[()]/g, '').trim() : 'Dynamic';
+
+    const safeTitle = (target.title || 'Media Video').replace(/[/\\?%*:|"<>]/g, '_').trim();
+    const ext = target.extension || (target.isAudioOnly ? 'mp3' : 'mp4');
+    mediaModalFileName.value = `${safeTitle}.${ext}`;
+
+    const remembered = localStorage.getItem('wdm_last_save_location');
+    mediaModalSavePath.value = remembered || defaultDownloadDirectory || '';
+    chkRememberLocation.checked = true;
+
+    mediaDownloadModal.classList.add('open');
+  }
+
+  function closeMediaModal() {
+    mediaDownloadModal.classList.remove('open');
+    currentMediaTarget = null;
+  }
+
+  btnCancelMediaModal.addEventListener('click', closeMediaModal);
+  btnCancelMediaDownload.addEventListener('click', closeMediaModal);
+
+  mediaDownloadModal.addEventListener('click', (e) => {
+    if (e.target === mediaDownloadModal) {
+      closeMediaModal();
+    }
+  });
+
+  btnBrowseMediaLocation.addEventListener('click', () => {
+    sendToHost('browse_folder');
+  });
+
+  btnConfirmMediaDownload.addEventListener('click', () => {
+    if (!currentMediaTarget) return;
+
+    const savePath = mediaModalSavePath.value.trim();
+    const fileName = mediaModalFileName.value.trim() || `${currentMediaTarget.title}.${currentMediaTarget.extension}`;
+
+    if (chkRememberLocation.checked && savePath) {
+      localStorage.setItem('wdm_last_save_location', savePath);
+    }
+
+    sendToHost('download_media', {
+      url: currentMediaTarget.url,
+      formatId: currentMediaTarget.formatId,
+      title: currentMediaTarget.title,
+      fileName: fileName,
+      destinationDirectory: savePath,
+      isAudioOnly: currentMediaTarget.isAudioOnly
+    });
+
+    closeMediaModal();
+
+    // Switch to "All Downloads" tab so user immediately sees live download progress
+    const allDownloadsTab = document.querySelector('.nav-item[data-tab="downloads"]');
+    if (allDownloadsTab) {
+      allDownloadsTab.click();
+    }
+  });
+
+  // Query default download directory from host on load
+  sendToHost('get_default_folder');
 
   // Benchmark Runner
   btnRunBenchmark.addEventListener('click', async () => {

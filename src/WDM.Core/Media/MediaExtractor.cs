@@ -319,6 +319,8 @@ public sealed partial class MediaExtractor : IMediaExtractor
         string url, 
         string? formatId = null, 
         string? destinationDirectory = null, 
+        string? outputFileName = null,
+        bool isAudioOnly = false,
         Action<double, string>? progressCallback = null,
         CancellationToken cancellationToken = default)
     {
@@ -328,10 +330,34 @@ public sealed partial class MediaExtractor : IMediaExtractor
 
         var outDir = destinationDirectory ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
         Directory.CreateDirectory(outDir);
-        var outputTemplate = Path.Combine(outDir, "%(title)s.%(ext)s");
+
+        string outputTemplate;
+        if (!string.IsNullOrWhiteSpace(outputFileName))
+        {
+            var cleanFileName = HttpProbe.SanitizeFileName(outputFileName);
+            var ext = Path.GetExtension(cleanFileName);
+            if (string.IsNullOrWhiteSpace(ext))
+            {
+                outputTemplate = Path.Combine(outDir, $"{cleanFileName}.%(ext)s");
+            }
+            else
+            {
+                outputTemplate = Path.Combine(outDir, cleanFileName);
+            }
+        }
+        else
+        {
+            outputTemplate = Path.Combine(outDir, "%(title)s.%(ext)s");
+        }
 
         string formatArg;
-        if (!string.IsNullOrWhiteSpace(formatId))
+        if (isAudioOnly)
+        {
+            formatArg = !string.IsNullOrWhiteSpace(formatId)
+                ? $"-f \"{formatId}\" -x --audio-format mp3"
+                : "-f \"bestaudio\" -x --audio-format mp3";
+        }
+        else if (!string.IsNullOrWhiteSpace(formatId))
         {
             formatArg = $"-f \"{formatId}+bestaudio/{formatId}/best\" --merge-output-format mp4";
         }

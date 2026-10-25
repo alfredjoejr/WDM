@@ -9,6 +9,8 @@ public interface IMediaExtractor
         string url, 
         string? formatId = null, 
         string? destinationDirectory = null, 
+        string? outputFileName = null,
+        bool isAudioOnly = false,
         Action<double, string>? progressCallback = null,
         CancellationToken cancellationToken = default);
 }

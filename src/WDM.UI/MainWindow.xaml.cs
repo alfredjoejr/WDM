@@ -122,6 +122,14 @@ public partial class MainWindow : Window
                     await HandleDownloadMediaAsync(root, requestId);
                     break;
 
+                case "browse_folder":
+                    HandleBrowseFolder(requestId);
+                    break;
+
+                case "get_default_folder":
+                    HandleGetDefaultFolder(requestId);
+                    break;
+
                 case "get_clipboard":
                     HandleGetClipboard(requestId);
                     break;
@@ -342,9 +350,22 @@ public partial class MainWindow : Window
         var url = root.GetProperty("url").GetString()!;
         var formatId = root.TryGetProperty("formatId", out var fProp) ? fProp.GetString() : null;
         var title = root.TryGetProperty("title", out var tProp) ? tProp.GetString() : "Media Video";
+        var fileName = root.TryGetProperty("fileName", out var fnProp) ? fnProp.GetString() : null;
+        var destinationDirectory = root.TryGetProperty("destinationDirectory", out var dProp) ? dProp.GetString() : null;
+        var isAudioOnly = root.TryGetProperty("isAudioOnly", out var aoProp) && aoProp.GetBoolean();
         var downloadId = Guid.NewGuid().ToString("N");
 
-        PostToWeb(new { requestId, action = "media_download_started", downloadId, url, title, formatId });
+        PostToWeb(new
+        {
+            requestId,
+            action = "media_download_started",
+            downloadId,
+            url,
+            title,
+            fileName = fileName ?? $"{title}.mp4",
+            formatId,
+            destinationDirectory
+        });
 
         _ = Task.Run(async () =>
         {
@@ -353,6 +374,9 @@ public partial class MainWindow : Window
                 var dir = await _mediaExtractor.DownloadMediaAsync(
                     url,
                     formatId,
+                    destinationDirectory,
+                    fileName,
+                    isAudioOnly,
                     progressCallback: (percent, statusLine) =>
                     {
                         PostToWeb(new
@@ -383,6 +407,32 @@ public partial class MainWindow : Window
         });
 
         await Task.CompletedTask;
+    }
+
+    private void HandleBrowseFolder(string? requestId)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            var dialog = new Microsoft.Win32.OpenFolderDialog
+            {
+                Title = "Select Destination Folder"
+            };
+            var result = dialog.ShowDialog(this);
+            if (result == true)
+            {
+                PostToWeb(new { requestId, action = "browse_folder_result", success = true, folderPath = dialog.FolderName });
+            }
+            else
+            {
+                PostToWeb(new { requestId, action = "browse_folder_result", success = false });
+            }
+        });
+    }
+
+    private void HandleGetDefaultFolder(string? requestId)
+    {
+        var defaultDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+        PostToWeb(new { requestId, action = "default_folder_result", folderPath = defaultDir });
     }
 
     private void HandleGetClipboard(string? requestId)
