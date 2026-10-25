@@ -38,7 +38,24 @@ public partial class MainWindow : Window
 
         try
         {
-            await WebView.EnsureCoreWebView2Async();
+            var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            var webViewDataDir = Path.Combine(localAppData, "WDM", "WebView2Data");
+            Directory.CreateDirectory(webViewDataDir);
+
+            CoreWebView2Environment env;
+            try
+            {
+                env = await CoreWebView2Environment.CreateAsync(null, webViewDataDir);
+            }
+            catch
+            {
+                // If previous instance abruptly closed or locked, fallback to clean session folder
+                var fallbackDir = Path.Combine(localAppData, "WDM", $"WebView2_{Guid.NewGuid():N}");
+                Directory.CreateDirectory(fallbackDir);
+                env = await CoreWebView2Environment.CreateAsync(null, fallbackDir);
+            }
+
+            await WebView.EnsureCoreWebView2Async(env);
             WebView.CoreWebView2.Settings.IsStatusBarEnabled = false;
             WebView.CoreWebView2.Settings.AreDevToolsEnabled = true;
 
