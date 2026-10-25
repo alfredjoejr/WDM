@@ -73,6 +73,26 @@ public partial class MainWindow : Window
                 }
             };
 
+            // Open external URLs and mailto links in the user's default desktop browser
+            WebView.CoreWebView2.NavigationStarting += (s, args) =>
+            {
+                if (args.Uri.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                    args.Uri.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
+                    args.Uri.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase))
+                {
+                    args.Cancel = true;
+                    try
+                    {
+                        Process.Start(new ProcessStartInfo
+                        {
+                            FileName = args.Uri,
+                            UseShellExecute = true
+                        });
+                    }
+                    catch { }
+                }
+            };
+
             WebView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
 
             var htmlPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wwwroot", "index.html");

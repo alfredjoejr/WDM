@@ -1342,3 +1342,95 @@ input:checked + .switch-pill:before {
   opacity: 1;
   transform: translateY(0) scale(1);
 }
+
+/* Info & Developer Section */
+.about-hero {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 10px 0 20px 0;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.about-logo-box {
+  width: 64px;
+  height: 64px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, #0071e3 0%, #00c7be 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10px 24px rgba(0, 113, 227, 0.35);
+  flex-shrink: 0;
+}
+
+.about-logo-icon {
+  width: 32px;
+  height: 32px;
+  fill: #fff;
+}
+
+.about-hero-text h2 {
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--label-primary);
+  letter-spacing: -0.02em;
+  margin-bottom: 4px;
+}
+
+.about-hero-text p {
+  font-size: 13px;
+  color: var(--label-secondary);
+  margin-bottom: 10px;
+}
+
+.version-badges {
+  display: flex;
+  gap: 8px;
+}
+
+.dev-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #38a5ff;
+  background: var(--apple-blue-tint);
+  padding: 4px 14px;
+  border-radius: 8px;
+  letter-spacing: 0.01em;
+  border: 1px solid rgba(0, 113, 227, 0.25);
+}
+
+.link-action-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.apple-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #38a5ff;
+  background: rgba(0, 113, 227, 0.12);
+  border: 1px solid rgba(0, 113, 227, 0.25);
+  padding: 6px 14px;
+  border-radius: 8px;
+  text-decoration: none;
+  transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+  cursor: pointer;
+}
+
+.apple-link-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.apple-link-btn:hover {
+  background: rgba(0, 113, 227, 0.22);
+  border-color: #38a5ff;
+  transform: translateY(-1px);
+}
+

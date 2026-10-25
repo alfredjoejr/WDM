@@ -50,6 +50,11 @@
           <svg viewBox="0 0 24 24"><path d="M12 1a2 2 0 0 1 2 2v.28a7.03 7.03 0 0 1 2.37.98l.2-.2a2 2 0 0 1 2.83 0l1.41 1.41a2 2 0 0 1 0 2.83l-.2.2c.4.73.74 1.53.98 2.37H22a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-.28a7.03 7.03 0 0 1-.98 2.37l.2.2a2 2 0 0 1 0 2.83l-1.41 1.41a2 2 0 0 1-2.83 0l-.2-.2a7.03 7.03 0 0 1-2.37.98V21a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2v-.28a7.03 7.03 0 0 1-2.37-.98l-.2.2a2 2 0 0 1-2.83 0l-1.41-1.41a2 2 0 0 1 0-2.83l.2-.2a7.03 7.03 0 0 1-.98-2.37H2a2 2 0 0 1-2-2v-2a2 2 0 0 1 2-2h.28a7.03 7.03 0 0 1 .98-2.37l-.2-.2a2 2 0 0 1 0-2.83L4.47 5.1a2 2 0 0 1 2.83 0l.2.2c.73-.4 1.53-.74 2.37-.98V3a2 2 0 0 1 2-2h2zm0 7a4 4 0 1 0 0 8 4 4 0 0 0 0-8z"/></svg>
           <span>Settings</span>
         </button>
+
+        <button class="nav-item" data-tab="info">
+          <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+          <span>Info</span>
+        </button>
       </nav>
 
       <!-- macOS Style Bottom Glass Card -->
@@ -282,6 +287,71 @@
                 <p>Registration status in Windows Registry for Chrome, Edge, and Brave.</p>
               </div>
               <span class="status-pill green">Active & Connected</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 5: Info & Developer Details -->
+      <section class="tab-pane" id="paneInfo">
+        <div class="glass-panel content-card">
+          <div class="about-hero">
+            <div class="about-logo-box">
+              <svg viewBox="0 0 24 24" class="about-logo-icon"><path d="M12 2a1 1 0 0 1 1 1v10.59l3.3-3.3a1 1 0 1 1 1.4 1.42l-5 5a1 1 0 0 1-1.4 0l-5-5a1 1 0 0 1 1.4-1.42L11 13.59V3a1 1 0 0 1 1-1zm-7 16a1 1 0 0 1 1-1h12a1 1 0 1 1 0 2H6a1 1 0 0 1-1-1z"/></svg>
+            </div>
+            <div class="about-hero-text">
+              <h2>WDM — Windows Download Manager</h2>
+              <p>High-speed, multi-connection accelerated download manager & media grabber for Windows.</p>
+              <div class="version-badges">
+                <span class="status-pill blue">Version 1.0.0 (Official Release)</span>
+                <span class="status-pill green">.NET 10 Evergreen</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="ios-group-list glass-panel" style="margin-top: 20px;">
+            <div class="ios-cell">
+              <div class="cell-label">
+                <h4>Developer</h4>
+                <p>Lead Architecture, Core Engine & UI Implementation</p>
+              </div>
+              <div class="dev-tag">
+                <span class="dev-name">Joash</span>
+              </div>
+            </div>
+
+            <div class="ios-cell">
+              <div class="cell-label">
+                <h4>Contact & Feedback</h4>
+                <p>Official communication channel for support, bug reports, and suggestions.</p>
+              </div>
+              <div class="link-action-group">
+                <a href="mailto:alfredjoejr@duck.com" class="apple-link-btn" title="Send email">
+                  <svg viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg>
+                  <span>alfredjoejr@duck.com</span>
+                </a>
+              </div>
+            </div>
+
+            <div class="ios-cell">
+              <div class="cell-label">
+                <h4>GitHub Repository</h4>
+                <p>Official open-source repository, source code, and release packages.</p>
+              </div>
+              <div class="link-action-group">
+                <a href="https://github.com/alfredjoejr/WDM" target="_blank" class="apple-link-btn" title="View repository">
+                  <svg viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+                  <span>github.com/alfredjoejr/WDM</span>
+                </a>
+              </div>
+            </div>
+
+            <div class="ios-cell">
+              <div class="cell-label">
+                <h4>Engine Capabilities</h4>
+                <p>16x parallel range connections, zero-stitch I/O, live YouTube/HLS extraction.</p>
+              </div>
+              <span class="status-pill blue">High-Speed Multi-Threaded</span>
             </div>
           </div>
         </div>
