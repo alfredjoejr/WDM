@@ -160,7 +160,8 @@
 
   function drawSpeedChart() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    const maxVal = Math.max(1024 * 1024, ...speedHistory) * 1.15;
+    const currentMax = Math.max(...speedHistory);
+    const maxVal = Math.max(100 * 1024, currentMax) * 1.15;
     const stepX = canvas.width / (speedHistory.length - 1);
 
     // Soft diffused vertical gradient
@@ -330,14 +331,22 @@
           url: msg.url,
           fileName: msg.fileName || (msg.title || 'Media Video') + '.mp4',
           destinationDirectory: msg.destinationDirectory,
+          isAudioOnly: msg.isAudioOnly || false,
           status: 'Downloading',
           percentage: 0,
           speed: 'Catching Stream',
           speedBytes: 0,
           downloaded: '0 B',
-          total: 'Media Stream',
+          total: 'Probing...',
+          totalBytes: 0,
           eta: '--:--',
-          chunks: []
+          activeConnections: msg.isAudioOnly ? 1 : 2,
+          chunks: msg.isAudioOnly ? [
+            { index: 0, progress: 0, name: 'Audio Stream' }
+          ] : [
+            { index: 0, progress: 0, name: 'Video Stream' },
+            { index: 1, progress: 0, name: 'Audio Stream' }
+          ]
         });
         renderDownloads();
         break;
@@ -346,12 +355,40 @@
         if (downloads.has(msg.downloadId)) {
           const task = downloads.get(msg.downloadId);
           task.status = 'Downloading';
+          task.activeConnections = task.isAudioOnly ? 1 : 2;
+
           if (msg.percentage >= 0) {
             task.percentage = msg.percentage;
           }
+
           if (msg.status) {
-            task.speed = msg.status.replace(/\[download\]\s*/, '').trim();
+            const parsed = parseYtDlpStatus(msg.status);
+            if (parsed) {
+              if (parsed.percent !== null && parsed.percent >= 0) {
+                task.percentage = parsed.percent;
+              }
+              if (parsed.speedBytes > 0) {
+                task.speedBytes = parsed.speedBytes;
+                task.speed = parsed.speedFormatted;
+              }
+              if (parsed.totalBytes > 0) {
+                task.totalBytes = parsed.totalBytes;
+                task.total = parsed.totalFormatted;
+                const downloadedBytes = Math.round((task.percentage / 100) * parsed.totalBytes);
+                task.downloaded = formatBytes(downloadedBytes);
+              }
+              if (parsed.eta) {
+                task.eta = parsed.eta;
+              }
+            } else {
+              task.speed = msg.status.replace(/\[download\]\s*/, '').trim();
+            }
           }
+
+          if (task.chunks && task.chunks.length > 0) {
+            task.chunks.forEach(c => c.progress = task.percentage);
+          }
+
           updateTaskCard(task);
         }
         break;
@@ -363,6 +400,13 @@
           task.percentage = 100;
           task.speed = 'Completed';
           task.speedBytes = 0;
+          task.eta = 'Done';
+          if (task.total && task.total !== 'Probing...' && task.total !== 'Media Stream') {
+            task.downloaded = task.total;
+          }
+          if (task.chunks) {
+            task.chunks.forEach(c => c.progress = 100);
+          }
           task.filePath = msg.filePath || msg.destinationDirectory;
           task.destinationDirectory = msg.destinationDirectory;
           renderDownloads();
@@ -925,6 +969,64 @@
       btnRunBenchmark.disabled = false;
     }, 2200);
   });
+
+  // Parse yt-dlp live console telemetry
+  function parseYtDlpStatus(rawStatus) {
+    if (!rawStatus) return null;
+
+    const result = {
+      percent: null,
+      totalBytes: 0,
+      totalFormatted: null,
+      speedBytes: 0,
+      speedFormatted: null,
+      eta: null
+    };
+
+    // Percentage: e.g. "93.1%"
+    const pctMatch = rawStatus.match(/(\d+(?:\.\d+)?)%/);
+    if (pctMatch) {
+      result.percent = parseFloat(pctMatch[1]);
+    }
+
+    // Total size: e.g. "of 13.41MiB" or "of ~20.00MiB"
+    const totalMatch = rawStatus.match(/of\s+~?\s*(\d+(?:\.\d+)?)\s*([KMGT]?i?B)/i);
+    if (totalMatch) {
+      const val = parseFloat(totalMatch[1]);
+      const unit = totalMatch[2].toUpperCase();
+      let mult = 1;
+      if (unit.startsWith('K')) mult = 1024;
+      else if (unit.startsWith('M')) mult = 1024 * 1024;
+      else if (unit.startsWith('G')) mult = 1024 * 1024 * 1024;
+      else if (unit.startsWith('T')) mult = 1024 * 1024 * 1024 * 1024;
+
+      result.totalBytes = Math.round(val * mult);
+      result.totalFormatted = formatBytes(result.totalBytes);
+    }
+
+    // Speed: e.g. "at 168.19KiB/s"
+    const speedMatch = rawStatus.match(/at\s+(\d+(?:\.\d+)?)\s*([KMGT]?i?B\/s)/i);
+    if (speedMatch) {
+      const val = parseFloat(speedMatch[1]);
+      const unit = speedMatch[2].toUpperCase();
+      let mult = 1;
+      if (unit.startsWith('K')) mult = 1024;
+      else if (unit.startsWith('M')) mult = 1024 * 1024;
+      else if (unit.startsWith('G')) mult = 1024 * 1024 * 1024;
+      else if (unit.startsWith('T')) mult = 1024 * 1024 * 1024 * 1024;
+
+      result.speedBytes = Math.round(val * mult);
+      result.speedFormatted = formatBytes(result.speedBytes) + '/s';
+    }
+
+    // ETA: e.g. "ETA 00:03"
+    const etaMatch = rawStatus.match(/ETA\s+([0-9:]+)/i);
+    if (etaMatch) {
+      result.eta = etaMatch[1];
+    }
+
+    return result;
+  }
 
   // Utility
   function formatBytes(bytes) {
