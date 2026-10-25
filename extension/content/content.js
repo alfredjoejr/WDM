@@ -112,11 +112,6 @@
     wrapper.className = 'wdm-hooker-wrapper';
 
     wrapper.innerHTML = `
-      <div class="wdm-hooker-tooltip">
-        <span class="wdm-tooltip-text">Download this video with WDM</span>
-        <div class="wdm-tooltip-arrow"></div>
-      </div>
-
       <div class="wdm-hooker-bar" title="Click to view all download formats">
         <div class="wdm-hooker-main">
           <span class="wdm-play-icon">
@@ -202,7 +197,7 @@
         const action = item.getAttribute('data-action');
 
         if (action === 'open_app') {
-          chrome.runtime.sendMessage({ action: 'open_app' });
+          sendExtensionMessage({ action: 'open_app' });
           showToast("Opening WDM Dashboard...");
         } else if (action === 'audio_only') {
           startDownload(null, true);
@@ -251,6 +246,40 @@
     }
   }
 
+  function sendExtensionMessage(msg) {
+    return new Promise((resolve) => {
+      try {
+        let settled = false;
+        const res = chrome.runtime.sendMessage(msg, (response) => {
+          if (!settled) {
+            settled = true;
+            if (chrome.runtime.lastError) {
+              resolve({ success: false, message: chrome.runtime.lastError.message });
+            } else {
+              resolve(response || { success: false, message: "No response from extension" });
+            }
+          }
+        });
+
+        if (res && typeof res.then === 'function') {
+          res.then((response) => {
+            if (!settled) {
+              settled = true;
+              resolve(response || { success: false, message: "No response from extension" });
+            }
+          }).catch((err) => {
+            if (!settled) {
+              settled = true;
+              resolve({ success: false, message: err?.message || String(err) });
+            }
+          });
+        }
+      } catch (err) {
+        resolve({ success: false, message: err.message });
+      }
+    });
+  }
+
   function triggerStreamSniffer(force = false) {
     const pageUrl = window.location.href;
     if (!force && pageUrl === currentVideoUrl && cachedStreams) return;
@@ -260,19 +289,17 @@
     isSniffing = true;
 
     if (activeHooker) {
-      const tooltipText = activeHooker.querySelector('.wdm-tooltip-text');
       const countBadge = activeHooker.querySelector('.wdm-file-count');
-      if (tooltipText) tooltipText.textContent = "Checking streams with WDM...";
       if (countBadge) countBadge.style.display = 'none';
       if (activeHooker.classList.contains('open')) {
         showLoadingSpinner();
       }
     }
 
-    chrome.runtime.sendMessage({
+    sendExtensionMessage({
       action: "sniff_media",
       url: pageUrl
-    }, (res) => {
+    }).then((res) => {
       isSniffing = false;
 
       if (!activeHooker) return;
@@ -281,14 +308,14 @@
         cachedStreams = res.data;
         updateHookerUI(res.data);
       } else {
-        console.warn("[WDM] Stream sniff result:", res);
-        // Fallback: direct HTML5 stream detection
-        fallbackHtml5Detection();
+        const errorMsg = res?.message || res?.error || (res ? JSON.stringify(res) : 'Unknown response');
+        console.warn("[WDM] Stream sniff result:", errorMsg);
+        fallbackHtml5Detection(errorMsg);
       }
     });
   }
 
-  function fallbackHtml5Detection() {
+  function fallbackHtml5Detection(errorMsg = '') {
     const video = document.querySelector('video');
     const directSrc = video ? (video.currentSrc || video.src) : null;
 
@@ -307,6 +334,7 @@
         menuBody.innerHTML = `
           <div style="padding: 14px 10px; text-align: center; color: #94a3b8; font-size: 11px;">
             <span>Ready to download with WDM.</span><br>
+            ${errorMsg ? `<div style="color: #f87171; font-size: 10px; margin: 6px 0; word-break: break-all;">(${errorMsg})</div>` : ''}
             <button class="wdm-retry-sniff-btn" style="margin-top: 8px; padding: 4px 12px; background: rgba(0,113,227,0.2); border: 1px solid rgba(0,113,227,0.5); color: #38bdf8; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 500;">↻ Retry Sniffing Formats</button>
           </div>
         `;
@@ -327,12 +355,6 @@
 
     const formats = data.formats || [];
     const videoCount = formats.length;
-
-    // Update speech bubble tooltip
-    const tooltipText = activeHooker.querySelector('.wdm-tooltip-text');
-    if (tooltipText) {
-      tooltipText.textContent = `Download this video with WDM (${videoCount} files)`;
-    }
 
     // Update count badge on bar
     const countBadge = activeHooker.querySelector('.wdm-file-count');
@@ -415,14 +437,14 @@
 
     showToast(`✓ Starting high-speed download: ${fileName}`);
 
-    chrome.runtime.sendMessage({
+    sendExtensionMessage({
       action: "download_media",
       url: pageUrl,
       formatId: formatId,
       fileName: fileName,
       isAudioOnly: isAudio
-    }, (res) => {
-      if (res && res.action === 'media_download_started') {
+    }).then((res) => {
+      if (res && (res.action === 'media_download_started' || res.downloadId)) {
         showToast(`✓ WDM is downloading at accelerated speed!`);
       }
     });

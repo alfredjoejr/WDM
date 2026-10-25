@@ -3,6 +3,19 @@ namespace WDM.NativeHost;
 [System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public static class Program
 {
+    private static readonly string LogFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WDM", "native_host.log");
+
+    public static void Log(string message)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(LogFile);
+            if (!string.IsNullOrWhiteSpace(dir)) Directory.CreateDirectory(dir);
+            File.AppendAllText(LogFile, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {message}{Environment.NewLine}");
+        }
+        catch { }
+    }
+
     public static async Task<int> Main(string[] args)
     {
         // 1. Command-line installation / management mode
@@ -31,6 +44,7 @@ public static class Program
         }
 
         // 2. Browser Native Messaging Host mode (STDIO pipe communication)
+        Log("NativeHost started by browser.");
         var service = new HostService();
         using var cts = new CancellationTokenSource();
 
@@ -41,23 +55,26 @@ public static class Program
                 var message = await HostProtocol.ReadMessageAsync(cts.Token);
                 if (!message.HasValue)
                 {
-                    // Stdio pipe was closed by the browser
+                    Log("Stdio pipe closed by browser.");
                     break;
                 }
 
+                Log($"Received message: {message.Value.GetRawText()}");
                 await service.HandleMessageAsync(message.Value, cts.Token);
             }
         }
         catch (OperationCanceledException)
         {
-            // Browser exited
+            Log("NativeHost canceled / browser exited.");
         }
         catch (Exception ex)
         {
+            Log($"Fatal NativeHost error: {ex}");
             await Console.Error.WriteLineAsync($"Fatal NativeHost error: {ex.Message}");
             return 1;
         }
 
+        Log("NativeHost exiting normally.");
         return 0;
     }
 }

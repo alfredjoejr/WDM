@@ -11,6 +11,7 @@ namespace WDM.NativeHost;
 /// <summary>
 /// Handles JSON-RPC actions dispatched from the browser extension.
 /// </summary>
+[System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public sealed class HostService
 {
     private readonly HttpProbe _probe = new();
@@ -185,10 +186,12 @@ public sealed class HostService
     private async Task HandleSniffMediaAsync(JsonElement root, string requestId, CancellationToken ct)
     {
         var url = root.GetProperty("url").GetString()!;
+        Program.Log($"HandleSniffMediaAsync: Sniffing streams for {url}");
         var metadata = await _mediaExtractor.ExtractMetadataAsync(url, ct);
 
         if (metadata == null)
         {
+            Program.Log($"HandleSniffMediaAsync: No streams extracted for {url}");
             await HostProtocol.SendMessageAsync(new
             {
                 requestId,
@@ -199,6 +202,7 @@ public sealed class HostService
             return;
         }
 
+        Program.Log($"HandleSniffMediaAsync: Successfully extracted {metadata.Formats.Count} formats for '{metadata.Title}'");
         await HostProtocol.SendMessageAsync(new
         {
             requestId,
@@ -291,20 +295,36 @@ public sealed class HostService
             var baseDir = AppDomain.CurrentDomain.BaseDirectory;
             var candidates = new[]
             {
-                Path.Combine(baseDir, "..", "WDM.UI.exe"),
+                Path.Combine(baseDir, "..", "WDM.UI", "WDM.UI.exe"),
                 Path.Combine(baseDir, "WDM.UI.exe"),
+                Path.Combine(baseDir, "..", "WDM.UI.exe"),
+                Path.Combine(baseDir, "..", "..", "dist", "WDM-v1.0.0-windows-x64", "WDM.UI.exe"),
+                Path.Combine(baseDir, "..", "..", "src", "WDM.UI", "bin", "Release", "net10.0-windows", "win-x64", "WDM.UI.exe"),
+                Path.Combine(baseDir, "..", "..", "src", "WDM.UI", "bin", "Debug", "net10.0-windows", "WDM.UI.exe"),
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WDM", "WDM.UI.exe")
             };
 
             foreach (var path in candidates)
             {
-                if (File.Exists(path))
+                var full = Path.GetFullPath(path);
+                if (File.Exists(full))
                 {
-                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
+                    Program.Log($"HandleOpenApp: Starting UI process: {full}");
+                    var psi = new System.Diagnostics.ProcessStartInfo(full)
+                    {
+                        UseShellExecute = true,
+                        WorkingDirectory = Path.GetDirectoryName(full)
+                    };
+                    System.Diagnostics.Process.Start(psi);
                     return;
                 }
             }
+
+            Program.Log("HandleOpenApp: Failed to locate WDM.UI.exe in candidate paths.");
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Program.Log($"HandleOpenApp Exception: {ex.Message}");
+        }
     }
 }

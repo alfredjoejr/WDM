@@ -46,9 +46,14 @@ function getNativePort() {
     });
 
     nativePort.onDisconnect.addListener(() => {
-      const err = chrome.runtime.lastError?.message || "Disconnected";
+      const err = chrome.runtime.lastError?.message || "Host process disconnected";
       console.warn("WDM Native Host disconnected:", err);
       nativePort = null;
+      for (const [id, req] of pendingRequests.entries()) {
+        clearTimeout(req.timeout);
+        req.reject(new Error("WDM Native Host disconnected: " + err));
+      }
+      pendingRequests.clear();
       updateBadge();
     });
 
