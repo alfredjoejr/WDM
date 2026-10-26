@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
 using Microsoft.Web.WebView2.Core;
@@ -24,6 +25,12 @@ public partial class MainWindow : Window
     private bool _isInitialized;
     private bool _isWebLoaded;
 
+    [DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern void SwitchToThisWindow(IntPtr hWnd, bool fAltTab);
+
     public MainWindow()
     {
         InitializeComponent();
@@ -33,13 +40,12 @@ public partial class MainWindow : Window
         _historyFilePath = Path.Combine(appData, "downloads_history.json");
         _ipcEventsFilePath = Path.Combine(appData, "extension_events.jsonl");
 
-        // Start tailing from the end of existing file (or recent 32KB so active extension downloads appear)
+        // Start tailing from the end of existing file so old stopped downloads from past sessions never ghost replay
         if (File.Exists(_ipcEventsFilePath))
         {
             try
             {
-                var len = new FileInfo(_ipcEventsFilePath).Length;
-                _ipcLastPosition = Math.Max(0, len - 32768);
+                _ipcLastPosition = new FileInfo(_ipcEventsFilePath).Length;
             }
             catch { }
         }
@@ -60,6 +66,13 @@ public partial class MainWindow : Window
             Topmost = true;
             Topmost = false;
             Focus();
+
+            var handle = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+            if (handle != IntPtr.Zero)
+            {
+                SwitchToThisWindow(handle, true);
+                SetForegroundWindow(handle);
+            }
         }
         catch { }
     }
@@ -185,6 +198,7 @@ public partial class MainWindow : Window
                 fs.Seek(_ipcLastPosition, SeekOrigin.Begin);
                 using var reader = new StreamReader(fs);
                 string? line;
+                var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                 while ((line = reader.ReadLine()) != null)
                 {
                     if (string.IsNullOrWhiteSpace(line) || !line.TrimStart().StartsWith('{')) continue;
@@ -193,6 +207,16 @@ public partial class MainWindow : Window
                     {
                         using var doc = JsonDocument.Parse(line);
                         var root = doc.RootElement;
+
+                        // Drop stale events from previous sessions older than 30 seconds
+                        if (root.TryGetProperty("timestamp", out var tsProp) && tsProp.TryGetInt64(out var ts))
+                        {
+                            if (now - ts > 30000)
+                            {
+                                continue;
+                            }
+                        }
+
                         var action = root.TryGetProperty("action", out var aProp) ? aProp.GetString() : null;
 
                         if (action == "bring_to_front")
@@ -369,7 +393,7 @@ public partial class MainWindow : Window
         var outDir = root.TryGetProperty("destinationDirectory", out var dProp) ? dProp.GetString() : null;
         var speedLimit = root.TryGetProperty("speedLimit", out var lProp) && lProp.GetInt64() > 0 ? lProp.GetInt64() : (long?)null;
 
-        var downloadId = Guid.NewGuid().ToString("N");
+        var downloadId = (root.TryGetProperty("downloadId", out var idProp) ? idProp.GetString() : null) ?? Guid.NewGuid().ToString("N");
         var engine = new DownloadEngine();
         _activeEngines[downloadId] = engine;
 
@@ -461,7 +485,7 @@ public partial class MainWindow : Window
         {
             try { cts.Cancel(); cts.Dispose(); } catch { }
         }
-        BroadcastIpcEvent(new { action = "pause_download", downloadId = id });
+        BroadcastIpcEvent(new { action = "pause_download", downloadId = id, timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
     }
 
     private void HandleCancelDownload(JsonElement root)
@@ -475,7 +499,7 @@ public partial class MainWindow : Window
         {
             try { cts.Cancel(); cts.Dispose(); } catch { }
         }
-        BroadcastIpcEvent(new { action = "cancel_download", downloadId = id });
+        BroadcastIpcEvent(new { action = "cancel_download", downloadId = id, timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
     }
 
     private void BroadcastIpcEvent(object payload)
@@ -601,7 +625,7 @@ public partial class MainWindow : Window
         var fileName = root.TryGetProperty("fileName", out var fnProp) ? fnProp.GetString() : null;
         var destinationDirectory = root.TryGetProperty("destinationDirectory", out var dProp) ? dProp.GetString() : null;
         var isAudioOnly = root.TryGetProperty("isAudioOnly", out var aoProp) && aoProp.GetBoolean();
-        var downloadId = Guid.NewGuid().ToString("N");
+        var downloadId = (root.TryGetProperty("downloadId", out var idProp) ? idProp.GetString() : null) ?? Guid.NewGuid().ToString("N");
         var cts = new CancellationTokenSource();
         _activeMediaDownloads[downloadId] = cts;
 

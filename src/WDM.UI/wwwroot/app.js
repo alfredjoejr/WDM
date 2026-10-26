@@ -327,6 +327,8 @@
           eta: '--:--',
           chunks: []
         });
+        const allTab1 = document.querySelector('.nav-item[data-tab="downloads"]');
+        if (allTab1 && !allTab1.classList.contains('active')) allTab1.click();
         renderDownloads();
         break;
 
@@ -407,10 +409,37 @@
             { index: 1, progress: 0, name: 'Audio Stream' }
           ]
         });
+        const allTab2 = document.querySelector('.nav-item[data-tab="downloads"]');
+        if (allTab2 && !allTab2.classList.contains('active')) allTab2.click();
         renderDownloads();
         break;
 
       case 'media_download_progress':
+        if (!downloads.has(msg.downloadId)) {
+          downloads.set(msg.downloadId, {
+            id: msg.downloadId,
+            url: msg.url || 'Web Video Stream',
+            fileName: msg.fileName || 'Media Video.mp4',
+            destinationDirectory: msg.destinationDirectory,
+            isAudioOnly: false,
+            isMedia: true,
+            status: 'Downloading',
+            percentage: msg.percentage || 0,
+            speed: 'Catching Stream',
+            speedBytes: 0,
+            downloaded: '0 B',
+            total: 'Probing...',
+            totalBytes: 0,
+            eta: '--:--',
+            activeConnections: 2,
+            chunks: [
+              { index: 0, progress: 0, name: 'Video Stream' },
+              { index: 1, progress: 0, name: 'Audio Stream' }
+            ]
+          });
+          renderDownloads();
+        }
+
         if (downloads.has(msg.downloadId)) {
           const task = downloads.get(msg.downloadId);
           if (task.status === 'Canceled' || task.status === 'Paused') return;
@@ -704,6 +733,7 @@
 
     if (task.isMedia || task.formatId || task.url.includes('youtube.com') || task.url.includes('youtu.be') || task.fileName.endsWith('.mp4') || task.fileName.endsWith('.mp3')) {
       sendToHost('download_media', {
+        downloadId: task.id,
         url: task.url,
         formatId: task.formatId || null,
         title: task.fileName.replace(/\.[^/.]+$/, ''),
@@ -713,6 +743,7 @@
       });
     } else {
       sendToHost('start_download', {
+        downloadId: task.id,
         url: task.url,
         fileName: task.fileName,
         destinationDirectory: task.destinationDirectory || null

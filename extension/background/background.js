@@ -207,9 +207,22 @@ function updateBadge() {
 }
 
 function notifyPopup(message) {
-  chrome.runtime.sendMessage(message).catch(() => {
-    // Popup might not be open, safe to ignore
-  });
+  try {
+    chrome.runtime.sendMessage(message).catch(() => {});
+  } catch { }
+
+  try {
+    chrome.tabs.query({}, (tabs) => {
+      if (!tabs) return;
+      for (const tab of tabs) {
+        if (tab && tab.id) {
+          try {
+            chrome.tabs.sendMessage(tab.id, message).catch(() => {});
+          } catch { }
+        }
+      }
+    });
+  } catch { }
 }
 
 // Download Interception (Chrome: onDeterminingFilename, Firefox: onCreated)

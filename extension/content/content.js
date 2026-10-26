@@ -441,6 +441,11 @@
 
     showToast(`✓ Starting high-speed download: ${fileName}`);
 
+    if (activeHooker) {
+      const label = activeHooker.querySelector('.wdm-hooker-label');
+      if (label) label.textContent = 'Connecting to WDM...';
+    }
+
     sendExtensionMessage({
       action: "download_media",
       url: pageUrl,
@@ -451,6 +456,12 @@
       if (res && (res.action === 'media_download_started' || res.downloadId)) {
         showToast(`✓ WDM is downloading at accelerated speed!`);
       }
+    });
+
+    // Automatically open WDM Dashboard and bring it to the front so the user sees live progress & controls
+    sendExtensionMessage({
+      action: "open_app",
+      url: pageUrl
     });
   }
 
@@ -477,6 +488,47 @@
       i++;
     }
     return bytes.toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
+  }
+
+  // Live status updater on the floating video bar
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener((msg) => {
+      if (!msg) return;
+
+      if (msg.type === 'download_progress' || msg.type === 'media_download_progress') {
+        const data = msg.data || msg;
+        if (activeHooker) {
+          const label = activeHooker.querySelector('.wdm-hooker-label');
+          if (label) {
+            const pct = Math.round(data.percentage || 0);
+            let speedText = '';
+            if (data.status) {
+              const m = data.status.match(/at\s+(\S+\/s)/i);
+              if (m) speedText = ` (${m[1]})`;
+            }
+            label.textContent = `Downloading ${pct}%${speedText}`;
+          }
+        }
+      } else if (msg.type === 'download_completed' || msg.type === 'media_download_completed') {
+        if (activeHooker) {
+          const label = activeHooker.querySelector('.wdm-hooker-label');
+          if (label) {
+            label.textContent = '✓ Download Complete!';
+            setTimeout(() => {
+              label.textContent = 'Download this video';
+            }, 6000);
+          }
+        }
+        showToast('✓ Video downloaded successfully! Saved to Downloads.');
+      } else if (msg.type === 'download_failed' || msg.type === 'media_download_failed') {
+        if (activeHooker) {
+          const label = activeHooker.querySelector('.wdm-hooker-label');
+          if (label) {
+            label.textContent = 'Download this video';
+          }
+        }
+      }
+    });
   }
 
   // Launch on DOM ready

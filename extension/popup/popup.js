@@ -102,6 +102,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       if (res && res.downloadId) {
         urlInput.value = '';
+        chrome.runtime.sendMessage({ action: 'open_app', url: url });
       } else if (res && res.error) {
         alert("Error starting download: " + res.error);
       }

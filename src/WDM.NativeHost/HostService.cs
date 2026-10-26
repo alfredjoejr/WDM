@@ -372,7 +372,8 @@ public sealed class HostService
             fileName = fileName ?? "Media Video.mp4",
             formatId,
             isAudioOnly,
-            destinationDirectory
+            destinationDirectory,
+            timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         };
 
         await HostProtocol.SendMessageAsync(startEvent, ct);
@@ -396,7 +397,8 @@ public sealed class HostService
                             downloadId,
                             percentage = percent,
                             statusText = line,
-                            status = line
+                            status = line,
+                            timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
                         };
                         await HostProtocol.SendMessageAsync(progressEvent);
                         BroadcastToUi(progressEvent);
@@ -408,7 +410,8 @@ public sealed class HostService
                     action = "media_download_completed",
                     downloadId,
                     filePath = completedPath,
-                    destinationDirectory = Path.GetDirectoryName(completedPath) ?? targetDirOrNull(completedPath)
+                    destinationDirectory = Path.GetDirectoryName(completedPath) ?? targetDirOrNull(completedPath),
+                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
                 };
                 await HostProtocol.SendMessageAsync(completedEvent);
                 BroadcastToUi(completedEvent);
@@ -419,7 +422,8 @@ public sealed class HostService
                 {
                     action = "media_download_failed",
                     downloadId,
-                    error = "Download stopped by user"
+                    error = "Download stopped by user",
+                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
                 };
                 await HostProtocol.SendMessageAsync(failedEvent);
                 BroadcastToUi(failedEvent);
@@ -430,7 +434,8 @@ public sealed class HostService
                 {
                     action = "media_download_failed",
                     downloadId,
-                    error = ex.Message
+                    error = ex.Message,
+                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
                 };
                 await HostProtocol.SendMessageAsync(failedEvent);
                 BroadcastToUi(failedEvent);
@@ -482,27 +487,25 @@ public sealed class HostService
                 timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
             });
 
-            // 1. Check if WDM.UI is already running with a valid window
+            // 1. Check if WDM.UI is already running
             var existingProcesses = Process.GetProcessesByName("WDM.UI");
-            bool activatedExisting = false;
-            foreach (var proc in existingProcesses)
+            if (existingProcesses.Length > 0)
             {
-                try
+                foreach (var proc in existingProcesses)
                 {
-                    proc.Refresh();
-                    if (proc.MainWindowHandle != IntPtr.Zero)
+                    try
                     {
-                        ShowWindow(proc.MainWindowHandle, IsIconic(proc.MainWindowHandle) ? SW_RESTORE : SW_SHOW);
-                        SwitchToThisWindow(proc.MainWindowHandle, true);
-                        SetForegroundWindow(proc.MainWindowHandle);
-                        activatedExisting = true;
+                        proc.Refresh();
+                        if (proc.MainWindowHandle != IntPtr.Zero)
+                        {
+                            ShowWindow(proc.MainWindowHandle, IsIconic(proc.MainWindowHandle) ? SW_RESTORE : SW_SHOW);
+                            SwitchToThisWindow(proc.MainWindowHandle, true);
+                            SetForegroundWindow(proc.MainWindowHandle);
+                        }
                     }
+                    catch { }
                 }
-                catch { }
-            }
 
-            if (activatedExisting)
-            {
                 Program.Log("HandleOpenApp: Signaled existing WDM.UI instance to come to foreground.");
                 return (true, null);
             }
