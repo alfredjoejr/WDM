@@ -286,7 +286,7 @@
 
   function triggerStreamSniffer(force = false) {
     const pageUrl = window.location.href;
-    if (!force && pageUrl === currentVideoUrl && cachedStreams) return;
+    if (!force && pageUrl === currentVideoUrl && (cachedStreams || isSniffing)) return;
 
     if (force) cachedStreams = null;
     currentVideoUrl = pageUrl;
@@ -458,10 +458,9 @@
       }
     });
 
-    // Automatically open WDM Dashboard and bring it to the front so the user sees live progress & controls
+    // Automatically open WDM Dashboard to All Downloads view so the user sees live progress & controls
     sendExtensionMessage({
-      action: "open_app",
-      url: pageUrl
+      action: "open_app"
     });
   }
 

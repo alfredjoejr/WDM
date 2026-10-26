@@ -40,12 +40,15 @@ public partial class MainWindow : Window
         _historyFilePath = Path.Combine(appData, "downloads_history.json");
         _ipcEventsFilePath = Path.Combine(appData, "extension_events.jsonl");
 
-        // Start tailing from the end of existing file so old stopped downloads from past sessions never ghost replay
+        // Start tailing from the recent 16KB so if WDM.UI was just launched by the browser extension,
+        // it immediately catches the media_download_started event written milliseconds earlier.
+        // Stale events (>15s old or missing timestamps) are filtered out in StartExtensionIpcTailer.
         if (File.Exists(_ipcEventsFilePath))
         {
             try
             {
-                _ipcLastPosition = new FileInfo(_ipcEventsFilePath).Length;
+                var len = new FileInfo(_ipcEventsFilePath).Length;
+                _ipcLastPosition = Math.Max(0, len - 16384);
             }
             catch { }
         }
@@ -208,13 +211,10 @@ public partial class MainWindow : Window
                         using var doc = JsonDocument.Parse(line);
                         var root = doc.RootElement;
 
-                        // Drop stale events from previous sessions older than 30 seconds
-                        if (root.TryGetProperty("timestamp", out var tsProp) && tsProp.TryGetInt64(out var ts))
+                        // Drop stale events from previous sessions (older than 15s or missing timestamp)
+                        if (!root.TryGetProperty("timestamp", out var tsProp) || !tsProp.TryGetInt64(out var ts) || (now - ts > 15000))
                         {
-                            if (now - ts > 30000)
-                            {
-                                continue;
-                            }
+                            continue;
                         }
 
                         var action = root.TryGetProperty("action", out var aProp) ? aProp.GetString() : null;
@@ -225,6 +225,10 @@ public partial class MainWindow : Window
                             if (root.TryGetProperty("url", out var uProp) && uProp.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(uProp.GetString()))
                             {
                                 PostToWeb(new { action = "open_url", url = uProp.GetString() });
+                            }
+                            else
+                            {
+                                PostToWeb(new { action = "switch_tab", tab = "downloads" });
                             }
                         }
                         else if (action == "cancel_download" || action == "pause_download")
@@ -311,6 +315,10 @@ public partial class MainWindow : Window
 
                 case "cancel_download":
                     HandleCancelDownload(root);
+                    break;
+
+                case "delete_download_files":
+                    HandleDeleteDownloadFiles(root);
                     break;
 
                 case "open_file":
@@ -500,6 +508,80 @@ public partial class MainWindow : Window
             try { cts.Cancel(); cts.Dispose(); } catch { }
         }
         BroadcastIpcEvent(new { action = "cancel_download", downloadId = id, timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
+    }
+
+    private void HandleDeleteDownloadFiles(JsonElement root)
+    {
+        var id = root.TryGetProperty("downloadId", out var idProp) ? idProp.GetString() : null;
+        if (!string.IsNullOrWhiteSpace(id))
+        {
+            if (_activeEngines.TryRemove(id, out var engine))
+            {
+                try { engine.Cancel(); engine.Dispose(); } catch { }
+            }
+            if (_activeMediaDownloads.TryRemove(id, out var cts))
+            {
+                try { cts.Cancel(); cts.Dispose(); } catch { }
+            }
+            BroadcastIpcEvent(new { action = "cancel_download", downloadId = id, timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
+        }
+
+        var filePath = root.TryGetProperty("filePath", out var fpProp) ? fpProp.GetString() : null;
+        var fileName = root.TryGetProperty("fileName", out var fnProp) ? fnProp.GetString() : null;
+        var destDir = root.TryGetProperty("destinationDirectory", out var ddProp) ? ddProp.GetString() : null;
+
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(250);
+
+            try
+            {
+                var dir = !string.IsNullOrWhiteSpace(destDir) && Directory.Exists(destDir)
+                    ? destDir
+                    : (!string.IsNullOrWhiteSpace(filePath) && Directory.Exists(filePath)
+                        ? filePath
+                        : (!string.IsNullOrWhiteSpace(filePath) ? Path.GetDirectoryName(filePath) : null))
+                      ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+
+                if (!string.IsNullOrWhiteSpace(filePath) && File.Exists(filePath))
+                {
+                    try { File.Delete(filePath); } catch { }
+                    try { WDM.Core.Storage.CheckpointStore.DeleteCheckpoint(filePath); } catch { }
+                }
+
+                if (!string.IsNullOrWhiteSpace(fileName) && Directory.Exists(dir))
+                {
+                    var cleanName = HttpProbe.SanitizeFileName(fileName);
+                    var exactTarget = Path.Combine(dir, cleanName);
+                    if (File.Exists(exactTarget))
+                    {
+                        try { File.Delete(exactTarget); } catch { }
+                        try { WDM.Core.Storage.CheckpointStore.DeleteCheckpoint(exactTarget); } catch { }
+                    }
+
+                    var baseName = Path.GetFileNameWithoutExtension(cleanName);
+                    if (!string.IsNullOrWhiteSpace(baseName))
+                    {
+                        foreach (var f in Directory.EnumerateFiles(dir))
+                        {
+                            var name = Path.GetFileName(f);
+                            if (name.StartsWith(baseName, StringComparison.OrdinalIgnoreCase) &&
+                                (name.EndsWith(".part", StringComparison.OrdinalIgnoreCase) ||
+                                 name.EndsWith(".ytdl", StringComparison.OrdinalIgnoreCase) ||
+                                 name.EndsWith(".wdm", StringComparison.OrdinalIgnoreCase) ||
+                                 name.Equals(cleanName, StringComparison.OrdinalIgnoreCase)))
+                            {
+                                try { File.Delete(f); } catch { }
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[HandleDeleteDownloadFiles error]: {ex.Message}");
+            }
+        });
     }
 
     private void BroadcastIpcEvent(object payload)

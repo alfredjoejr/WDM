@@ -238,7 +238,8 @@ public sealed class HostService
             action = "download_started",
             downloadId,
             url,
-            fileName = customFileName
+            fileName = customFileName,
+            timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         };
 
         // Acknowledge start immediately to browser and UI
@@ -256,13 +257,16 @@ public sealed class HostService
                     {
                         action = "download_progress",
                         downloadId,
+                        url,
+                        fileName = customFileName,
                         percentage = snapshot.ProgressPercentage,
                         speed = snapshot.SpeedFormatted,
                         speedBytes = snapshot.SpeedBytesPerSecond,
                         downloaded = snapshot.DownloadedFormatted,
                         total = snapshot.TotalFormatted,
                         eta = snapshot.EstimatedRemainingTime.HasValue ? $"{snapshot.EstimatedRemainingTime.Value:mm\\:ss}" : "--:--",
-                        activeConnections = snapshot.ActiveConnections
+                        activeConnections = snapshot.ActiveConnections,
+                        timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
                     };
                     await HostProtocol.SendMessageAsync(progressEvent);
                     BroadcastToUi(progressEvent);
@@ -284,10 +288,23 @@ public sealed class HostService
                     action = "download_completed",
                     downloadId,
                     filePath = savedPath,
-                    sha256 = hash
+                    sha256 = hash,
+                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
                 };
                 await HostProtocol.SendMessageAsync(completedEvent);
                 BroadcastToUi(completedEvent);
+            }
+            catch (OperationCanceledException)
+            {
+                var failedEvent = new
+                {
+                    action = "download_failed",
+                    downloadId,
+                    error = "Download stopped by user",
+                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                };
+                await HostProtocol.SendMessageAsync(failedEvent);
+                BroadcastToUi(failedEvent);
             }
             catch (Exception ex)
             {
@@ -295,7 +312,8 @@ public sealed class HostService
                 {
                     action = "download_failed",
                     downloadId,
-                    error = ex.Message
+                    error = ex.Message,
+                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
                 };
                 await HostProtocol.SendMessageAsync(failedEvent);
                 BroadcastToUi(failedEvent);
@@ -395,6 +413,11 @@ public sealed class HostService
                         {
                             action = "media_download_progress",
                             downloadId,
+                            url,
+                            fileName = fileName ?? "Media Video.mp4",
+                            formatId,
+                            isAudioOnly,
+                            destinationDirectory,
                             percentage = percent,
                             statusText = line,
                             status = line,

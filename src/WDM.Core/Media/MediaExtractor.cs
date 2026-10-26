@@ -171,6 +171,7 @@ public sealed partial class MediaExtractor : IMediaExtractor
                 {
                     FileName = ytDlpPath,
                     Arguments = $"--dump-json --no-warnings --no-playlist {ffmpegArg} \"{url}\"",
+                    RedirectStandardInput = true,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     UseShellExecute = false,
@@ -179,6 +180,7 @@ public sealed partial class MediaExtractor : IMediaExtractor
             };
 
             proc.Start();
+            try { proc.StandardInput.Close(); } catch { }
             var stdOutTask = proc.StandardOutput.ReadToEndAsync(cancellationToken);
             var stdErrTask = proc.StandardError.ReadToEndAsync(cancellationToken);
             await Task.WhenAll(stdOutTask, stdErrTask);
@@ -366,7 +368,7 @@ public sealed partial class MediaExtractor : IMediaExtractor
             formatArg = "-f \"bestvideo+bestaudio/best\" --merge-output-format mp4";
         }
 
-        var arguments = $"{formatArg} {ffmpegArg} --newline --progress -o \"{outputTemplate}\" \"{url}\"";
+        var arguments = $"{formatArg} {ffmpegArg} --no-warnings --continue --newline --progress -o \"{outputTemplate}\" \"{url}\"";
 
         using var proc = new Process
         {
@@ -374,6 +376,7 @@ public sealed partial class MediaExtractor : IMediaExtractor
             {
                 FileName = ytDlpPath,
                 Arguments = arguments,
+                RedirectStandardInput = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -411,6 +414,7 @@ public sealed partial class MediaExtractor : IMediaExtractor
         };
 
         proc.Start();
+        try { proc.StandardInput.Close(); } catch { }
         proc.BeginOutputReadLine();
 
         using var reg = cancellationToken.Register(() =>
@@ -438,6 +442,7 @@ public sealed partial class MediaExtractor : IMediaExtractor
                 {
                     proc.Kill(entireProcessTree: true);
                 }
+                await proc.WaitForExitAsync().WaitAsync(TimeSpan.FromMilliseconds(500));
             }
             catch { }
             throw;
@@ -513,6 +518,7 @@ public sealed partial class MediaExtractor : IMediaExtractor
                 {
                     FileName = binary,
                     Arguments = "--version",
+                    RedirectStandardInput = true,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     UseShellExecute = false,
@@ -520,6 +526,7 @@ public sealed partial class MediaExtractor : IMediaExtractor
                 }
             };
             proc.Start();
+            try { proc.StandardInput.Close(); } catch { }
             await proc.WaitForExitAsync(ct);
             return proc.ExitCode == 0;
         }

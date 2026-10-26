@@ -59,8 +59,9 @@ public static class Program
                     break;
                 }
 
-                Log($"Received message: {message.Value.GetRawText()}");
-                await service.HandleMessageAsync(message.Value, cts.Token);
+                var msgPayload = message.Value;
+                Log($"Received message: {msgPayload.GetRawText()}");
+                _ = Task.Run(() => service.HandleMessageAsync(msgPayload, cts.Token), cts.Token);
             }
         }
         catch (OperationCanceledException)

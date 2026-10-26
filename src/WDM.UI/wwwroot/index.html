@@ -487,6 +487,34 @@
     </div>
   </div>
 
+  <!-- Apple Sheet Modal: Delete Download Confirmation -->
+  <div class="modal-backdrop" id="deleteConfirmModal">
+    <div class="modal-sheet glass-modal" style="max-width: 420px;">
+      <div class="modal-top">
+        <h3>Delete Download</h3>
+        <button class="modal-close-circle" id="btnCloseDeleteModal">✕</button>
+      </div>
+
+      <div class="modal-content-body" style="gap: 14px;">
+        <p style="font-size: 13px; color: var(--label-secondary); line-height: 1.5; margin: 0;">
+          Are you sure you want to remove <b id="deleteModalFileName" style="color: var(--label-primary); word-break: break-all;">this item</b> from your downloads list?
+        </p>
+
+        <div class="field-block" style="margin-top: 2px; padding: 10px 12px; background: rgba(255, 69, 58, 0.08); border: 1px solid rgba(255, 69, 58, 0.22); border-radius: 8px;">
+          <label class="apple-checkbox-label" style="cursor: pointer;">
+            <input type="checkbox" id="chkDeleteFromDisk">
+            <span style="color: #ff6961; font-weight: 500;">Also delete file from disk</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="modal-actions-bar">
+        <button class="apple-btn apple-btn-glass" id="btnCancelDeleteModal">Cancel</button>
+        <button class="apple-btn apple-btn-primary" id="btnConfirmDeleteModal" style="background: linear-gradient(180deg, #ff453a 0%, #d70015 100%); border-color: rgba(255, 69, 58, 0.5);">Delete</button>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>

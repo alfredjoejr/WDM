@@ -160,6 +160,16 @@ public sealed class DownloadEngine : IDownloadEngine, IDisposable
             await SaveCurrentCheckpointAsync();
             throw;
         }
+        finally
+        {
+            try
+            {
+                _diskManager?.Flush();
+                _diskManager?.Dispose();
+                _diskManager = null;
+            }
+            catch { }
+        }
     }
 
     private async Task RunChunkWorkerAsync(DownloadChunk chunk, DownloadOptions options, CancellationToken ct)

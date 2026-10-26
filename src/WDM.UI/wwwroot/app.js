@@ -67,6 +67,15 @@
 
   let defaultDownloadDirectory = '';
   let currentMediaTarget = null;
+  let pendingDeleteTask = null;
+
+  // Delete Confirmation Modal
+  const deleteConfirmModal = document.getElementById('deleteConfirmModal');
+  const deleteModalFileName = document.getElementById('deleteModalFileName');
+  const chkDeleteFromDisk = document.getElementById('chkDeleteFromDisk');
+  const btnCloseDeleteModal = document.getElementById('btnCloseDeleteModal');
+  const btnCancelDeleteModal = document.getElementById('btnCancelDeleteModal');
+  const btnConfirmDeleteModal = document.getElementById('btnConfirmDeleteModal');
 
   // Benchmark Tab
   const btnRunBenchmark = document.getElementById('btnRunBenchmark');
@@ -384,64 +393,79 @@
         }
         break;
 
-      case 'media_download_started':
+      case 'media_download_started': {
+        const prev = downloads.get(msg.downloadId);
+        const isAudio = msg.isAudioOnly ?? prev?.isAudioOnly ?? false;
+        const pct = prev?.percentage || 0;
         downloads.set(msg.downloadId, {
           id: msg.downloadId,
-          url: msg.url,
-          formatId: msg.formatId,
-          fileName: msg.fileName || (msg.title || 'Media Video') + '.mp4',
-          destinationDirectory: msg.destinationDirectory,
-          isAudioOnly: msg.isAudioOnly || false,
+          url: msg.url || prev?.url,
+          formatId: msg.formatId || prev?.formatId,
+          fileName: msg.fileName || prev?.fileName || (msg.title || 'Media Video') + '.mp4',
+          destinationDirectory: msg.destinationDirectory || prev?.destinationDirectory,
+          isAudioOnly: isAudio,
           isMedia: true,
           status: 'Downloading',
-          percentage: 0,
+          percentage: pct,
           speed: 'Catching Stream',
           speedBytes: 0,
-          downloaded: '0 B',
-          total: 'Probing...',
-          totalBytes: 0,
+          downloaded: prev?.downloaded || '0 B',
+          total: prev?.total || 'Probing...',
+          totalBytes: prev?.totalBytes || 0,
           eta: '--:--',
-          activeConnections: msg.isAudioOnly ? 1 : 2,
-          chunks: msg.isAudioOnly ? [
-            { index: 0, progress: 0, name: 'Audio Stream' }
+          activeConnections: isAudio ? 1 : 2,
+          chunks: isAudio ? [
+            { index: 0, progress: pct, name: 'Audio Stream' }
           ] : [
-            { index: 0, progress: 0, name: 'Video Stream' },
-            { index: 1, progress: 0, name: 'Audio Stream' }
+            { index: 0, progress: pct, name: 'Video Stream' },
+            { index: 1, progress: pct, name: 'Audio Stream' }
           ]
         });
         const allTab2 = document.querySelector('.nav-item[data-tab="downloads"]');
         if (allTab2 && !allTab2.classList.contains('active')) allTab2.click();
         renderDownloads();
         break;
+      }
 
       case 'media_download_progress':
         if (!downloads.has(msg.downloadId)) {
           downloads.set(msg.downloadId, {
             id: msg.downloadId,
             url: msg.url || 'Web Video Stream',
+            formatId: msg.formatId || null,
             fileName: msg.fileName || 'Media Video.mp4',
-            destinationDirectory: msg.destinationDirectory,
-            isAudioOnly: false,
+            destinationDirectory: msg.destinationDirectory || null,
+            isAudioOnly: msg.isAudioOnly || false,
             isMedia: true,
             status: 'Downloading',
-            percentage: msg.percentage || 0,
+            percentage: msg.percentage >= 0 ? msg.percentage : 0,
             speed: 'Catching Stream',
             speedBytes: 0,
             downloaded: '0 B',
             total: 'Probing...',
             totalBytes: 0,
             eta: '--:--',
-            activeConnections: 2,
-            chunks: [
+            activeConnections: msg.isAudioOnly ? 1 : 2,
+            chunks: msg.isAudioOnly ? [
+              { index: 0, progress: 0, name: 'Audio Stream' }
+            ] : [
               { index: 0, progress: 0, name: 'Video Stream' },
               { index: 1, progress: 0, name: 'Audio Stream' }
             ]
           });
+          const allTabProg = document.querySelector('.nav-item[data-tab="downloads"]');
+          if (allTabProg && !allTabProg.classList.contains('active')) allTabProg.click();
           renderDownloads();
         }
 
         if (downloads.has(msg.downloadId)) {
           const task = downloads.get(msg.downloadId);
+          if (msg.url && (!task.url || task.url === 'Web Video Stream')) task.url = msg.url;
+          if (msg.fileName && (!task.fileName || task.fileName === 'Media Video.mp4')) task.fileName = msg.fileName;
+          if (msg.formatId && !task.formatId) task.formatId = msg.formatId;
+          if (typeof msg.isAudioOnly === 'boolean') task.isAudioOnly = msg.isAudioOnly;
+          if (msg.destinationDirectory && !task.destinationDirectory) task.destinationDirectory = msg.destinationDirectory;
+
           if (task.status === 'Canceled' || task.status === 'Paused') return;
           task.status = 'Downloading';
           task.activeConnections = task.isAudioOnly ? 1 : 2;
@@ -540,6 +564,15 @@
       case 'open_url':
         if (msg.url) {
           handlePastedUrl(msg.url);
+        }
+        break;
+
+      case 'switch_tab':
+        if (msg.tab) {
+          const tabBtn = document.querySelector(`.nav-item[data-tab="${msg.tab}"]`);
+          if (tabBtn && !tabBtn.classList.contains('active')) {
+            tabBtn.click();
+          }
         }
         break;
     }
@@ -689,8 +722,7 @@
     if (removeBtn) {
       removeBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        downloads.delete(task.id);
-        renderDownloads();
+        openDeleteModal(task);
       });
     }
 
@@ -715,6 +747,54 @@
     return card;
   }
 
+  function openDeleteModal(task) {
+    pendingDeleteTask = task;
+    if (deleteModalFileName) {
+      deleteModalFileName.textContent = task.fileName || 'this download';
+    }
+    if (chkDeleteFromDisk) {
+      chkDeleteFromDisk.checked = false;
+    }
+    if (deleteConfirmModal) {
+      deleteConfirmModal.classList.add('open');
+    }
+  }
+
+  function closeDeleteModal() {
+    pendingDeleteTask = null;
+    if (deleteConfirmModal) {
+      deleteConfirmModal.classList.remove('open');
+    }
+  }
+
+  if (btnCloseDeleteModal) btnCloseDeleteModal.addEventListener('click', closeDeleteModal);
+  if (btnCancelDeleteModal) btnCancelDeleteModal.addEventListener('click', closeDeleteModal);
+
+  if (btnConfirmDeleteModal) {
+    btnConfirmDeleteModal.addEventListener('click', () => {
+      if (!pendingDeleteTask) return;
+      const task = pendingDeleteTask;
+      const deleteFromDisk = chkDeleteFromDisk && chkDeleteFromDisk.checked;
+
+      if (deleteFromDisk) {
+        sendToHost('delete_download_files', {
+          downloadId: task.id,
+          filePath: task.filePath || null,
+          fileName: task.fileName || null,
+          destinationDirectory: task.destinationDirectory || null
+        });
+        showToast(`Deleted from list and disk: ${task.fileName}`);
+      } else {
+        sendToHost('cancel_download', { downloadId: task.id });
+        showToast(`Removed from list: ${task.fileName}`);
+      }
+
+      downloads.delete(task.id);
+      closeDeleteModal();
+      renderDownloads();
+    });
+  }
+
   function stopTask(task) {
     sendToHost('cancel_download', { downloadId: task.id });
     task.status = 'Canceled';
@@ -725,25 +805,50 @@
   }
 
   function restartTask(task) {
-    task.status = 'Downloading';
-    task.speed = 'Connecting...';
-    task.speedBytes = 0;
+    const oldId = task.id;
+    const newId = 'dl_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
+
+    // Ensure old process is terminated so its delayed exit events cannot affect the new run
+    sendToHost('cancel_download', { downloadId: oldId });
+
+    // Replace oldId with newId in-place in the Map to preserve card order without creating duplicates
+    const updatedEntries = [];
+    downloads.forEach((val, key) => {
+      if (key === oldId) {
+        task.id = newId;
+        task.status = 'Downloading';
+        task.speed = 'Connecting...';
+        task.speedBytes = 0;
+        task.error = null;
+        updatedEntries.push([newId, task]);
+      } else {
+        updatedEntries.push([key, val]);
+      }
+    });
+    downloads.clear();
+    updatedEntries.forEach(([k, v]) => downloads.set(k, v));
+
     showToast(`Resuming download: ${task.fileName}`);
     renderDownloads();
 
-    if (task.isMedia || task.formatId || task.url.includes('youtube.com') || task.url.includes('youtu.be') || task.fileName.endsWith('.mp4') || task.fileName.endsWith('.mp3')) {
+    const isMediaTask = task.isMedia ||
+      task.formatId ||
+      /youtube\.com|youtu\.be|vimeo\.com|tiktok\.com|twitter\.com|x\.com|twitch\.tv|soundcloud\.com/i.test(task.url || '') ||
+      /\.(mp4|webm|mkv|mp3|m4a)$/i.test(task.fileName || '');
+
+    if (isMediaTask) {
       sendToHost('download_media', {
-        downloadId: task.id,
+        downloadId: newId,
         url: task.url,
         formatId: task.formatId || null,
-        title: task.fileName.replace(/\.[^/.]+$/, ''),
+        title: (task.fileName || 'Media Video').replace(/\.[^/.]+$/, ''),
         fileName: task.fileName,
         destinationDirectory: task.destinationDirectory || null,
         isAudioOnly: task.isAudioOnly || false
       });
     } else {
       sendToHost('start_download', {
-        downloadId: task.id,
+        downloadId: newId,
         url: task.url,
         fileName: task.fileName,
         destinationDirectory: task.destinationDirectory || null
