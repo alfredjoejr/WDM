@@ -19,7 +19,59 @@ public sealed class HostService
     private readonly HttpProbe _probe = new();
     private readonly MediaExtractor _mediaExtractor = new();
     private readonly ConcurrentDictionary<string, DownloadEngine> _activeDownloads = new();
+    private readonly ConcurrentDictionary<string, CancellationTokenSource> _activeMediaDownloads = new();
     private static readonly object IpcLock = new();
+
+    public HostService()
+    {
+        StartIpcWatcher();
+    }
+
+    private void StartIpcWatcher()
+    {
+        _ = Task.Run(async () =>
+        {
+            long lastPos = 0;
+            if (File.Exists(IpcEventsFilePath))
+            {
+                try { lastPos = new FileInfo(IpcEventsFilePath).Length; } catch { }
+            }
+
+            while (true)
+            {
+                try
+                {
+                    await Task.Delay(400);
+                    if (!File.Exists(IpcEventsFilePath)) continue;
+
+                    using var fs = new FileStream(IpcEventsFilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                    if (fs.Length < lastPos) lastPos = 0;
+                    if (fs.Length == lastPos) continue;
+
+                    fs.Seek(lastPos, SeekOrigin.Begin);
+                    using var reader = new StreamReader(fs);
+                    string? line;
+                    while ((line = await reader.ReadLineAsync()) != null)
+                    {
+                        if (string.IsNullOrWhiteSpace(line) || !line.TrimStart().StartsWith('{')) continue;
+                        try
+                        {
+                            using var doc = JsonDocument.Parse(line);
+                            var root = doc.RootElement;
+                            var action = root.TryGetProperty("action", out var aProp) ? aProp.GetString() : null;
+                            if (action == "cancel_download" || action == "pause_download")
+                            {
+                                HandleCancelDownload(root);
+                            }
+                        }
+                        catch { }
+                    }
+                    lastPos = fs.Position;
+                }
+                catch { }
+            }
+        });
+    }
 
     private static string IpcEventsFilePath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WDM", "extension_events.jsonl");
@@ -97,6 +149,16 @@ public sealed class HostService
 
                 case "download_media":
                     await HandleDownloadMediaAsync(root, requestId, cancellationToken);
+                    break;
+
+                case "cancel_download":
+                    HandleCancelDownload(root);
+                    await HostProtocol.SendMessageAsync(new { requestId, success = true }, cancellationToken);
+                    break;
+
+                case "pause_download":
+                    HandleCancelDownload(root);
+                    await HostProtocol.SendMessageAsync(new { requestId, success = true }, cancellationToken);
                     break;
 
                 case "open_app":
@@ -298,6 +360,8 @@ public sealed class HostService
         var destinationDirectory = root.TryGetProperty("destinationDirectory", out var dProp) ? dProp.GetString() : null;
 
         var downloadId = Guid.NewGuid().ToString("N");
+        var cts = new CancellationTokenSource();
+        _activeMediaDownloads[downloadId] = cts;
 
         var startEvent = new
         {
@@ -337,7 +401,7 @@ public sealed class HostService
                         await HostProtocol.SendMessageAsync(progressEvent);
                         BroadcastToUi(progressEvent);
                     },
-                    cancellationToken: ct);
+                    cancellationToken: cts.Token);
 
                 var completedEvent = new
                 {
@@ -348,6 +412,17 @@ public sealed class HostService
                 };
                 await HostProtocol.SendMessageAsync(completedEvent);
                 BroadcastToUi(completedEvent);
+            }
+            catch (OperationCanceledException)
+            {
+                var failedEvent = new
+                {
+                    action = "media_download_failed",
+                    downloadId,
+                    error = "Download stopped by user"
+                };
+                await HostProtocol.SendMessageAsync(failedEvent);
+                BroadcastToUi(failedEvent);
             }
             catch (Exception ex)
             {
@@ -360,7 +435,34 @@ public sealed class HostService
                 await HostProtocol.SendMessageAsync(failedEvent);
                 BroadcastToUi(failedEvent);
             }
+            finally
+            {
+                _activeMediaDownloads.TryRemove(downloadId, out _);
+                cts.Dispose();
+            }
         }, ct);
+    }
+
+    public void HandleCancelDownload(JsonElement root)
+    {
+        var downloadId = root.TryGetProperty("downloadId", out var idProp) ? idProp.GetString() : null;
+        if (!string.IsNullOrWhiteSpace(downloadId))
+        {
+            Program.Log($"HandleCancelDownload: Canceling download {downloadId}");
+            if (_activeDownloads.TryRemove(downloadId, out var engine))
+            {
+                engine.Cancel();
+            }
+            if (_activeMediaDownloads.TryRemove(downloadId, out var cts))
+            {
+                try
+                {
+                    cts.Cancel();
+                    cts.Dispose();
+                }
+                catch { }
+            }
+        }
     }
 
     private static string targetDirOrNull(string path) => Directory.Exists(path) ? path : (Path.GetDirectoryName(path) ?? string.Empty);

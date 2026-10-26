@@ -348,6 +348,15 @@ chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
     return true;
   }
 
+  if (req.action === "cancel_download") {
+    activeDownloads.delete(req.downloadId);
+    updateBadge();
+    sendNativeMessage({ action: "cancel_download", downloadId: req.downloadId })
+      .then(res => sendResponse(res))
+      .catch(err => sendResponse({ success: false, message: err.message }));
+    return true;
+  }
+
   if (req.action === "start_manual_download") {
     sendNativeMessage({ action: "start_download", url: req.url, connections: req.connections || 16 })
       .then(res => sendResponse(res))

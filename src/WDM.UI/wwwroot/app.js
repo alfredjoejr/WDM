@@ -144,6 +144,49 @@
     renderDownloads();
   });
 
+  // Topbar Pause All and Resume All Actions
+  const btnPauseAll = document.getElementById('btnPauseAll');
+  const btnResumeAll = document.getElementById('btnResumeAll');
+
+  if (btnPauseAll) {
+    btnPauseAll.addEventListener('click', () => {
+      let stopped = 0;
+      downloads.forEach((task) => {
+        if (task.status === 'Downloading') {
+          sendToHost('cancel_download', { downloadId: task.id });
+          task.status = 'Canceled';
+          task.speed = 'Stopped';
+          task.speedBytes = 0;
+          stopped++;
+        }
+      });
+      if (stopped > 0) {
+        showToast(`Stopped ${stopped} download${stopped > 1 ? 's' : ''}.`);
+        renderDownloads();
+      } else {
+        showToast('No active downloads to stop.');
+      }
+    });
+  }
+
+  if (btnResumeAll) {
+    btnResumeAll.addEventListener('click', () => {
+      let resumed = 0;
+      downloads.forEach((task) => {
+        if (task.status === 'Canceled' || task.status === 'Paused' || task.status === 'Failed') {
+          restartTask(task);
+          resumed++;
+        }
+      });
+      if (resumed > 0) {
+        showToast(`Resuming ${resumed} download${resumed > 1 ? 's' : ''}...`);
+        renderDownloads();
+      } else {
+        showToast('No stopped downloads to resume.');
+      }
+    });
+  }
+
   // Canvas Speed Spline Chart (Apple Stocks Style)
   const canvas = document.getElementById('speedCanvas');
   const ctx = canvas.getContext('2d');
@@ -290,6 +333,7 @@
       case 'download_progress':
         if (downloads.has(msg.downloadId)) {
           const task = downloads.get(msg.downloadId);
+          if (task.status === 'Canceled' || task.status === 'Paused') return;
           task.status = 'Downloading';
           task.percentage = msg.percentage;
           task.speed = msg.speed;
@@ -319,8 +363,21 @@
       case 'download_failed':
         if (downloads.has(msg.downloadId)) {
           const task = downloads.get(msg.downloadId);
-          task.status = 'Failed';
+          task.status = (msg.error && msg.error.includes('stopped')) ? 'Canceled' : 'Failed';
+          task.speed = 'Stopped';
+          task.speedBytes = 0;
           task.error = msg.error;
+          renderDownloads();
+        }
+        break;
+
+      case 'cancel_download':
+      case 'pause_download':
+        if (msg.downloadId && downloads.has(msg.downloadId)) {
+          const task = downloads.get(msg.downloadId);
+          task.status = 'Canceled';
+          task.speed = 'Stopped';
+          task.speedBytes = 0;
           renderDownloads();
         }
         break;
@@ -329,9 +386,11 @@
         downloads.set(msg.downloadId, {
           id: msg.downloadId,
           url: msg.url,
+          formatId: msg.formatId,
           fileName: msg.fileName || (msg.title || 'Media Video') + '.mp4',
           destinationDirectory: msg.destinationDirectory,
           isAudioOnly: msg.isAudioOnly || false,
+          isMedia: true,
           status: 'Downloading',
           percentage: 0,
           speed: 'Catching Stream',
@@ -354,6 +413,7 @@
       case 'media_download_progress':
         if (downloads.has(msg.downloadId)) {
           const task = downloads.get(msg.downloadId);
+          if (task.status === 'Canceled' || task.status === 'Paused') return;
           task.status = 'Downloading';
           task.activeConnections = task.isAudioOnly ? 1 : 2;
 
@@ -416,7 +476,9 @@
       case 'media_download_failed':
         if (downloads.has(msg.downloadId)) {
           const task = downloads.get(msg.downloadId);
-          task.status = 'Failed';
+          task.status = (msg.error && msg.error.includes('stopped')) ? 'Canceled' : 'Failed';
+          task.speed = 'Stopped';
+          task.speedBytes = 0;
           task.error = msg.error;
           renderDownloads();
         }
@@ -514,8 +576,15 @@
             <button class="icon-btn btn-remove-task" title="Remove from list">
               <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
             </button>
+          ` : (task.status === 'Canceled' || task.status === 'Failed' || task.status === 'Paused') ? `
+            <button class="icon-btn btn-resume-task" title="Resume Download">
+              <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            </button>
+            <button class="icon-btn btn-remove-task" title="Remove from list">
+              <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+            </button>
           ` : `
-            <button class="icon-btn btn-pause" title="Cancel Download">
+            <button class="icon-btn btn-pause" title="Stop Download">
               <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
             </button>
           `}
@@ -598,10 +667,17 @@
 
     const pauseBtn = card.querySelector('.btn-pause');
     if (pauseBtn) {
-      pauseBtn.addEventListener('click', () => {
-        sendToHost('cancel_download', { downloadId: task.id });
-        task.status = 'Canceled';
-        renderDownloads();
+      pauseBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        stopTask(task);
+      });
+    }
+
+    const resumeBtn = card.querySelector('.btn-resume-task');
+    if (resumeBtn) {
+      resumeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        restartTask(task);
       });
     }
 
@@ -610,9 +686,48 @@
     return card;
   }
 
+  function stopTask(task) {
+    sendToHost('cancel_download', { downloadId: task.id });
+    task.status = 'Canceled';
+    task.speed = 'Stopped';
+    task.speedBytes = 0;
+    showToast(`Stopped download: ${task.fileName}`);
+    renderDownloads();
+  }
+
+  function restartTask(task) {
+    task.status = 'Downloading';
+    task.speed = 'Connecting...';
+    task.speedBytes = 0;
+    showToast(`Resuming download: ${task.fileName}`);
+    renderDownloads();
+
+    if (task.isMedia || task.formatId || task.url.includes('youtube.com') || task.url.includes('youtu.be') || task.fileName.endsWith('.mp4') || task.fileName.endsWith('.mp3')) {
+      sendToHost('download_media', {
+        url: task.url,
+        formatId: task.formatId || null,
+        title: task.fileName.replace(/\.[^/.]+$/, ''),
+        fileName: task.fileName,
+        destinationDirectory: task.destinationDirectory || null,
+        isAudioOnly: task.isAudioOnly || false
+      });
+    } else {
+      sendToHost('start_download', {
+        url: task.url,
+        fileName: task.fileName,
+        destinationDirectory: task.destinationDirectory || null
+      });
+    }
+  }
+
   function updateTaskCard(task) {
     const card = document.getElementById('taskCard_' + task.id);
     if (!card) {
+      renderDownloads();
+      return;
+    }
+
+    if (task.status === 'Canceled' || task.status === 'Paused' || task.status === 'Failed') {
       renderDownloads();
       return;
     }

@@ -660,7 +660,8 @@ body {
   color: #30d158;
 }
 
-.task-status-pill.paused {
+.task-status-pill.paused,
+.task-status-pill.canceled {
   background: rgba(255, 159, 10, 0.15);
   color: #ff9f0a;
 }

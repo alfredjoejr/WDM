@@ -413,8 +413,40 @@ public sealed partial class MediaExtractor : IMediaExtractor
         proc.Start();
         proc.BeginOutputReadLine();
 
+        using var reg = cancellationToken.Register(() =>
+        {
+            try
+            {
+                if (!proc.HasExited)
+                {
+                    proc.Kill(entireProcessTree: true);
+                }
+            }
+            catch { }
+        });
+
         var stdErrTask = proc.StandardError.ReadToEndAsync(cancellationToken);
-        await proc.WaitForExitAsync(cancellationToken);
+        try
+        {
+            await proc.WaitForExitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                if (!proc.HasExited)
+                {
+                    proc.Kill(entireProcessTree: true);
+                }
+            }
+            catch { }
+            throw;
+        }
+
+        if (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(cancellationToken);
+        }
 
         if (proc.ExitCode != 0)
         {

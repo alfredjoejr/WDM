@@ -17,6 +17,7 @@ public partial class MainWindow : Window
     private readonly HttpProbe _probe = new();
     private readonly MediaExtractor _mediaExtractor = new();
     private readonly ConcurrentDictionary<string, DownloadEngine> _activeEngines = new();
+    private readonly ConcurrentDictionary<string, CancellationTokenSource> _activeMediaDownloads = new();
     private readonly string _historyFilePath;
     private readonly string _ipcEventsFilePath;
     private long _ipcLastPosition;
@@ -201,6 +202,16 @@ public partial class MainWindow : Window
                             {
                                 PostToWeb(new { action = "open_url", url = uProp.GetString() });
                             }
+                        }
+                        else if (action == "cancel_download" || action == "pause_download")
+                        {
+                            var cancelId = root.TryGetProperty("downloadId", out var idProp) ? idProp.GetString() : null;
+                            if (!string.IsNullOrWhiteSpace(cancelId))
+                            {
+                                if (_activeEngines.TryRemove(cancelId, out var engine)) engine.Cancel();
+                                if (_activeMediaDownloads.TryRemove(cancelId, out var cts)) { try { cts.Cancel(); cts.Dispose(); } catch { } }
+                            }
+                            WebView?.CoreWebView2?.PostWebMessageAsJson(line);
                         }
                         else if (!string.IsNullOrWhiteSpace(action))
                         {
@@ -446,15 +457,37 @@ public partial class MainWindow : Window
         {
             engine.Pause();
         }
+        if (_activeMediaDownloads.TryRemove(id, out var cts))
+        {
+            try { cts.Cancel(); cts.Dispose(); } catch { }
+        }
+        BroadcastIpcEvent(new { action = "pause_download", downloadId = id });
     }
 
     private void HandleCancelDownload(JsonElement root)
     {
         var id = root.GetProperty("downloadId").GetString()!;
-        if (_activeEngines.TryGetValue(id, out var engine))
+        if (_activeEngines.TryRemove(id, out var engine))
         {
             engine.Cancel();
         }
+        if (_activeMediaDownloads.TryRemove(id, out var cts))
+        {
+            try { cts.Cancel(); cts.Dispose(); } catch { }
+        }
+        BroadcastIpcEvent(new { action = "cancel_download", downloadId = id });
+    }
+
+    private void BroadcastIpcEvent(object payload)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(_ipcEventsFilePath);
+            if (!string.IsNullOrWhiteSpace(dir)) Directory.CreateDirectory(dir);
+            var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+            File.AppendAllText(_ipcEventsFilePath, json + Environment.NewLine);
+        }
+        catch { }
     }
 
     private static void HandleOpenFile(JsonElement root)
@@ -569,6 +602,8 @@ public partial class MainWindow : Window
         var destinationDirectory = root.TryGetProperty("destinationDirectory", out var dProp) ? dProp.GetString() : null;
         var isAudioOnly = root.TryGetProperty("isAudioOnly", out var aoProp) && aoProp.GetBoolean();
         var downloadId = Guid.NewGuid().ToString("N");
+        var cts = new CancellationTokenSource();
+        _activeMediaDownloads[downloadId] = cts;
 
         PostToWeb(new
         {
@@ -601,7 +636,8 @@ public partial class MainWindow : Window
                             percentage = percent,
                             status = statusLine
                         });
-                    });
+                    },
+                    cancellationToken: cts.Token);
 
                 PostToWeb(new
                 {
@@ -609,6 +645,15 @@ public partial class MainWindow : Window
                     downloadId,
                     filePath = completedPath,
                     destinationDirectory = Directory.Exists(completedPath) ? completedPath : (Path.GetDirectoryName(completedPath) ?? destinationDirectory)
+                });
+            }
+            catch (OperationCanceledException)
+            {
+                PostToWeb(new
+                {
+                    action = "media_download_failed",
+                    downloadId,
+                    error = "Download stopped by user"
                 });
             }
             catch (Exception ex)
@@ -619,6 +664,11 @@ public partial class MainWindow : Window
                     downloadId,
                     error = ex.Message
                 });
+            }
+            finally
+            {
+                _activeMediaDownloads.TryRemove(downloadId, out _);
+                cts.Dispose();
             }
         });
 
