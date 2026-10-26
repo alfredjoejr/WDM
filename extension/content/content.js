@@ -197,8 +197,12 @@
         const action = item.getAttribute('data-action');
 
         if (action === 'open_app') {
-          sendExtensionMessage({ action: 'open_app' });
           showToast("Opening WDM Dashboard...");
+          sendExtensionMessage({ action: 'open_app', url: window.location.href }).then((res) => {
+            if (!res || res.success === false) {
+              showToast("⚠ Could not open WDM Dashboard: " + (res?.message || "Host disconnected"));
+            }
+          });
         } else if (action === 'audio_only') {
           startDownload(null, true);
         } else {

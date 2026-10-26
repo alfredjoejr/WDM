@@ -34,24 +34,36 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
-// Native Messaging Connection
+// Native Messaging Connection (Supports Chrome, Edge, Brave, and Firefox)
+function getRuntimeApi() {
+  if (typeof browser !== 'undefined' && browser.runtime) {
+    return browser.runtime;
+  }
+  return chrome.runtime;
+}
+
 function getNativePort() {
   if (nativePort) return nativePort;
 
   try {
-    nativePort = chrome.runtime.connectNative(NATIVE_HOST);
+    const api = getRuntimeApi();
+    nativePort = api.connectNative(NATIVE_HOST);
 
     nativePort.onMessage.addListener((msg) => {
       handleNativeMessage(msg);
     });
 
-    nativePort.onDisconnect.addListener(() => {
-      const err = chrome.runtime.lastError?.message || "Host process disconnected";
-      console.warn("WDM Native Host disconnected:", err);
+    nativePort.onDisconnect.addListener((p) => {
+      const api = getRuntimeApi();
+      const err = p?.error?.message || api.lastError?.message || "Host process disconnected";
+      console.warn("[WDM] Native Host port disconnected:", err);
       nativePort = null;
       for (const [id, req] of pendingRequests.entries()) {
         clearTimeout(req.timeout);
-        req.reject(new Error("WDM Native Host disconnected: " + err));
+        // Attempt one-shot fallback for in-flight requests before giving up
+        tryOneShotNativeMessage(req.msg)
+          .then(req.resolve)
+          .catch(() => req.reject(new Error("WDM Native Host disconnected: " + err)));
       }
       pendingRequests.clear();
       updateBadge();
@@ -59,31 +71,65 @@ function getNativePort() {
 
     return nativePort;
   } catch (err) {
-    console.error("Failed to connect to WDM Native Host:", err);
+    console.error("[WDM] Failed to connect to Native Host:", err);
     return null;
   }
 }
 
-function sendNativeMessage(msg) {
+function tryOneShotNativeMessage(msg) {
   return new Promise((resolve, reject) => {
-    const port = getNativePort();
-    if (!port) {
-      return reject(new Error("WDM Native Host is not registered or not running. Please run WDM.NativeHost --install."));
+    const api = getRuntimeApi();
+    if (!api || !api.sendNativeMessage) {
+      return reject(new Error("Native messaging API not available"));
     }
 
+    try {
+      const maybePromise = api.sendNativeMessage(NATIVE_HOST, msg, (response) => {
+        const lastErr = api.lastError?.message;
+        if (lastErr) {
+          reject(new Error("WDM Native Host disconnected: " + lastErr));
+        } else if (response) {
+          resolve(response);
+        } else {
+          resolve({ success: true });
+        }
+      });
+
+      if (maybePromise && typeof maybePromise.then === 'function') {
+        maybePromise.then(resolve).catch((err) => {
+          reject(new Error("WDM Native Host disconnected: " + (err?.message || String(err))));
+        });
+      }
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+function sendNativeMessage(msg) {
+  return new Promise((resolve, reject) => {
     const requestId = msg.requestId || ("req_" + Math.random().toString(36).substring(2, 10));
     msg.requestId = requestId;
 
-    pendingRequests.set(requestId, { resolve, reject, timeout: setTimeout(() => {
+    const port = getNativePort();
+    if (!port) {
+      // Fallback directly to one-shot native message
+      return tryOneShotNativeMessage(msg).then(resolve).catch(reject);
+    }
+
+    const timeout = setTimeout(() => {
       pendingRequests.delete(requestId);
-      reject(new Error("Native host request timed out"));
-    }, 45000) });
+      tryOneShotNativeMessage(msg).then(resolve).catch(reject);
+    }, 20000);
+
+    pendingRequests.set(requestId, { resolve, reject, msg, timeout });
 
     try {
       port.postMessage(msg);
     } catch (e) {
       pendingRequests.delete(requestId);
-      reject(e);
+      clearTimeout(timeout);
+      tryOneShotNativeMessage(msg).then(resolve).catch(reject);
     }
   });
 }
@@ -100,11 +146,12 @@ function handleNativeMessage(msg) {
   // 2. Handle streaming push notifications
   switch (msg.action) {
     case "download_started":
+    case "media_download_started":
       activeDownloads.set(msg.downloadId, {
         id: msg.downloadId,
-        url: msg.url,
+        url: msg.fileName || msg.url || "Media Stream",
         percentage: 0,
-        speed: "0 B/s",
+        speed: msg.action === "media_download_started" ? "Catching..." : "0 B/s",
         status: "Downloading"
       });
       updateBadge();
@@ -112,24 +159,34 @@ function handleNativeMessage(msg) {
       break;
 
     case "download_progress":
+    case "media_download_progress":
       if (activeDownloads.has(msg.downloadId)) {
         const item = activeDownloads.get(msg.downloadId);
-        item.percentage = msg.percentage;
-        item.speed = msg.speed;
-        item.downloaded = msg.downloaded;
-        item.total = msg.total;
+        if (typeof msg.percentage === "number" && msg.percentage >= 0) {
+          item.percentage = msg.percentage;
+        }
+        if (msg.speed) {
+          item.speed = msg.speed;
+        } else if (msg.statusText) {
+          const speedMatch = msg.statusText.match(/at\s+(\S+\/s)/i);
+          if (speedMatch) item.speed = speedMatch[1];
+        }
+        if (msg.downloaded) item.downloaded = msg.downloaded;
+        if (msg.total) item.total = msg.total;
       }
       updateBadge();
       notifyPopup({ type: "download_progress", data: msg });
       break;
 
     case "download_completed":
+    case "media_download_completed":
       activeDownloads.delete(msg.downloadId);
       updateBadge();
       notifyPopup({ type: "download_completed", data: msg });
       break;
 
     case "download_failed":
+    case "media_download_failed":
       activeDownloads.delete(msg.downloadId);
       updateBadge();
       notifyPopup({ type: "download_failed", data: msg });
@@ -285,8 +342,8 @@ chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
   }
 
   if (req.action === "open_app") {
-    sendNativeMessage({ action: "open_app" })
-      .then(res => sendResponse({ success: true }))
+    sendNativeMessage({ action: "open_app", url: req.url || "" })
+      .then(res => sendResponse({ success: res?.success !== false, message: res?.message || res?.error }))
       .catch(err => sendResponse({ success: false, message: err.message }));
     return true;
   }

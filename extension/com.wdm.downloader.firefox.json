@@ -1,0 +1,12 @@
+{
+  "name": "com.wdm.downloader",
+  "description": "WDM High-Speed Download Manager Native Messaging Host",
+  "path": "C:\\Users\\joash\\AppData\\Local\\WDM\\NativeHost\\WDM.NativeHost.exe",
+  "type": "stdio",
+  "allowed_extensions": [
+    "wdm-downloader@local",
+    "wdm-downloader@wdm.local",
+    "{2a3e3cb2-c5c7-46b3-bc78-fae08fc0f578}",
+    "2a3e3cb2-c5c7-46b3-bc78-fae08fc0f578@temporary-addon"
+  ]
+}

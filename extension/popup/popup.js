@@ -11,6 +11,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const chkSniffer = document.getElementById('chkSniffer');
   const connSelector = document.getElementById('connSelector');
   const lnkTestHost = document.getElementById('lnkTestHost');
+  const lnkOpenApp = document.getElementById('lnkOpenApp');
 
   let activeConnections = 16;
 
@@ -107,11 +108,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  // 6. Test Host Link
+  // 6. Test Host & Open Dashboard Links
   lnkTestHost.addEventListener('click', (e) => {
     e.preventDefault();
     checkHostConnection();
   });
+
+  if (lnkOpenApp) {
+    lnkOpenApp.addEventListener('click', (e) => {
+      e.preventDefault();
+      chrome.runtime.sendMessage({ action: 'open_app' });
+    });
+  }
 
   // 7. Render Active Downloads
   function renderDownloads(list) {

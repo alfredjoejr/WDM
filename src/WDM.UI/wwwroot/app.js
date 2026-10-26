@@ -445,6 +445,12 @@
           showToast("Clipboard is empty or does not contain text.");
         }
         break;
+
+      case 'open_url':
+        if (msg.url) {
+          handlePastedUrl(msg.url);
+        }
+        break;
     }
   }
 

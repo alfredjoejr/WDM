@@ -1,12 +1,10 @@
 {
   "name": "com.wdm.downloader",
   "description": "WDM High-Speed Download Manager Native Messaging Host",
-  "path": "C:\\Users\\joash\\OneDrive\\Documents\\Github\\WDM\\bin\\NativeHost\\WDM.NativeHost.exe",
+  "path": "C:\\Users\\joash\\AppData\\Local\\WDM\\NativeHost\\WDM.NativeHost.exe",
   "type": "stdio",
   "allowed_origins": [
-    "chrome-extension://*"
-  ],
-  "allowed_extensions": [
-    "wdm-downloader@local"
+    "chrome-extension://aemgoennlnmdpdcmbnejahkiimidblga/",
+    "chrome-extension://gkknkplnnmmfogkjhlgjfhfejjmhnoko/"
   ]
 }

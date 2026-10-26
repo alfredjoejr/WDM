@@ -1,5 +1,8 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Win32;
 
 namespace WDM.NativeHost;
@@ -13,20 +16,27 @@ public static class HostInstaller
 {
     public const string HostName = "com.wdm.downloader";
 
-    private static readonly (string Browser, string SubKey)[] RegistryTargets =
+    private static readonly (string Browser, string SubKey, bool IsFirefox)[] RegistryTargets =
     [
-        ("Google Chrome", @"Software\Google\Chrome\NativeMessagingHosts"),
-        ("Microsoft Edge", @"Software\Microsoft\Edge\NativeMessagingHosts"),
-        ("Mozilla Firefox", @"Software\Mozilla\NativeMessagingHosts"),
-        ("Mozilla Firefox (Wow6432)", @"Software\Wow6432Node\Mozilla\NativeMessagingHosts")
+        ("Google Chrome", @"Software\Google\Chrome\NativeMessagingHosts", false),
+        ("Microsoft Edge", @"Software\Microsoft\Edge\NativeMessagingHosts", false),
+        ("Brave Browser", @"Software\BraveSoftware\Brave-Browser\NativeMessagingHosts", false),
+        ("Mozilla Firefox", @"Software\Mozilla\NativeMessagingHosts", true),
+        ("Mozilla Firefox (Wow6432)", @"Software\Wow6432Node\Mozilla\NativeMessagingHosts", true)
     ];
 
-    public static string GetManifestPath()
+    public static string GetAppDataDirectory()
     {
         var appData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WDM");
         Directory.CreateDirectory(appData);
-        return Path.Combine(appData, $"{HostName}.json");
+        return appData;
     }
+
+    public static string GetChromiumManifestPath() => Path.Combine(GetAppDataDirectory(), $"{HostName}.json");
+
+    public static string GetFirefoxManifestPath() => Path.Combine(GetAppDataDirectory(), $"{HostName}.firefox.json");
+
+    public static string GetConfigPath() => Path.Combine(GetAppDataDirectory(), "host_config.json");
 
     public static bool Install(string? customExePath = null)
     {
@@ -37,62 +47,122 @@ public static class HostInstaller
             return false;
         }
 
-        var appData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WDM");
+        var appData = GetAppDataDirectory();
         var targetHostDir = Path.Combine(appData, "NativeHost");
         Directory.CreateDirectory(targetHostDir);
 
-        // Copy binary and its dependencies to LocalAppData (outside OneDrive)
-        var sourceDir = Path.GetDirectoryName(sourceExePath)!;
+        // 1. Copy NativeHost binary and dependencies to LocalAppData (outside OneDrive)
+        var sourceDir = Path.GetDirectoryName(Path.GetFullPath(sourceExePath))!;
         var targetExePath = Path.Combine(targetHostDir, Path.GetFileName(sourceExePath));
 
-        try
+        if (!string.Equals(sourceDir.TrimEnd('\\'), targetHostDir.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
         {
-            foreach (var file in Directory.EnumerateFiles(sourceDir, "*.*"))
+            try
             {
-                var dest = Path.Combine(targetHostDir, Path.GetFileName(file));
-                File.Copy(file, dest, overwrite: true);
+                CopyDirectoryRecursive(sourceDir, targetHostDir);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Notice] Could not mirror all NativeHost files to {targetHostDir}: {ex.Message}");
+                if (!File.Exists(targetExePath))
+                {
+                    targetExePath = sourceExePath;
+                }
             }
         }
-        catch (Exception ex)
+
+        // 2. Locate and deploy WDM.UI to LocalAppData\WDM\UI so "Open WDM Dashboard" always works
+        var sourceUiExe = FindSourceUiExecutable(sourceDir);
+        var targetUiDir = Path.Combine(appData, "UI");
+        var targetUiExe = Path.Combine(targetUiDir, "WDM.UI.exe");
+
+        if (!string.IsNullOrWhiteSpace(sourceUiExe) && File.Exists(sourceUiExe))
         {
-            Console.WriteLine($"[Notice] Could not mirror all files to {targetHostDir}: {ex.Message}");
-            targetExePath = sourceExePath; // fallback
+            var sourceUiDir = Path.GetDirectoryName(sourceUiExe)!;
+            if (!string.Equals(sourceUiDir.TrimEnd('\\'), targetUiDir.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    Directory.CreateDirectory(targetUiDir);
+                    CopyDirectoryRecursive(sourceUiDir, targetUiDir);
+                    Console.WriteLine($"[✓] UI Dashboard deployed to: {targetUiExe}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Notice] Could not mirror WDM.UI to {targetUiDir}: {ex.Message}");
+                }
+            }
         }
 
-        var manifestPath = GetManifestPath();
+        // 3. Locate extension folder and save host_config.json
+        var extensionDir = FindExtensionDirectory(sourceDir);
+        var config = new
+        {
+            installedUiExePath = File.Exists(targetUiExe) ? targetUiExe : null,
+            sourceUiExePath = sourceUiExe,
+            extensionDir = extensionDir,
+            updatedAt = DateTime.UtcNow.ToString("O")
+        };
+        File.WriteAllText(GetConfigPath(), JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true }));
 
-        // 1. Generate Manifest JSON
-        var manifest = new
+        // 4. Discover all valid Chromium extension origins (exact 32-char IDs; Chromium forbids wildcards)
+        var allowedOrigins = DiscoverChromiumAllowedOrigins(extensionDir);
+        var allowedFirefoxExtensions = DiscoverFirefoxAllowedExtensions();
+        var chromiumManifestPath = GetChromiumManifestPath();
+        var firefoxManifestPath = GetFirefoxManifestPath();
+        var targetHostChromiumManifest = Path.Combine(targetHostDir, $"{HostName}.json");
+        var targetHostFirefoxManifest = Path.Combine(targetHostDir, $"{HostName}.firefox.json");
+
+        // Update repo extension/com.wdm.downloader.json if present for reference
+        var chromiumManifest = new
         {
             name = HostName,
             description = "WDM High-Speed Download Manager Native Messaging Host",
             path = targetExePath,
             type = "stdio",
-            allowed_origins = new[]
-            {
-                "chrome-extension://*", // Accepts local unpacked development extensions or any ID
-            },
-            allowed_extensions = new[]
-            {
-                "wdm-downloader@local",
-                "2a3e3cb2-c5c7-46b3-bc78-fae08fc0f578",
-                "{2a3e3cb2-c5c7-46b3-bc78-fae08fc0f578}",
-                "2a3e3cb2-c5c7-46b3-bc78-fae08fc0f578@temporary-addon"
-            }
+            allowed_origins = allowedOrigins
         };
 
-        var json = JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(manifestPath, json);
+        var firefoxManifest = new
+        {
+            name = HostName,
+            description = "WDM High-Speed Download Manager Native Messaging Host",
+            path = targetExePath,
+            type = "stdio",
+            allowed_extensions = allowedFirefoxExtensions
+        };
 
-        // 2. Register in Windows Registry (HKCU)
-        bool allSucceeded = true;
-        foreach (var (browser, subKey) in RegistryTargets)
+        var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
+        var chromiumJson = JsonSerializer.Serialize(chromiumManifest, jsonOptions);
+        var firefoxJson = JsonSerializer.Serialize(firefoxManifest, jsonOptions);
+
+        // Write manifests to both LocalAppData\WDM and LocalAppData\WDM\NativeHost
+        File.WriteAllText(chromiumManifestPath, chromiumJson);
+        File.WriteAllText(firefoxManifestPath, firefoxJson);
+        File.WriteAllText(targetHostChromiumManifest, chromiumJson);
+        File.WriteAllText(targetHostFirefoxManifest, firefoxJson);
+
+        if (!string.IsNullOrWhiteSpace(extensionDir) && Directory.Exists(extensionDir))
         {
             try
             {
+                File.WriteAllText(Path.Combine(extensionDir, $"{HostName}.json"), chromiumJson);
+                File.WriteAllText(Path.Combine(extensionDir, $"{HostName}.firefox.json"), firefoxJson);
+            }
+            catch { }
+        }
+
+        // 5. Register in Windows Registry (HKCU)
+        bool allSucceeded = true;
+        foreach (var (browser, subKey, isFirefox) in RegistryTargets)
+        {
+            try
+            {
+                // Register the manifest located directly alongside the executable for optimal working directory and process spawning
+                var manifestToRegister = isFirefox ? targetHostFirefoxManifest : targetHostChromiumManifest;
                 using var key = Registry.CurrentUser.CreateSubKey($@"{subKey}\{HostName}");
-                key.SetValue(string.Empty, manifestPath, RegistryValueKind.String);
-                Console.WriteLine($"[✓] Registered for {browser}: HKCU\\{subKey}\\{HostName}");
+                key.SetValue(string.Empty, manifestToRegister, RegistryValueKind.String);
+                Console.WriteLine($"[✓] Registered for {browser}: HKCU\\{subKey}\\{HostName} -> {manifestToRegister}");
             }
             catch (Exception ex)
             {
@@ -101,15 +171,16 @@ public static class HostInstaller
             }
         }
 
-        Console.WriteLine($"[✓] Host Manifest generated at: {manifestPath}");
-        Console.WriteLine($"[✓] Target binary deployed at: {targetExePath}");
+        Console.WriteLine($"[✓] Allowed Chromium Origins ({allowedOrigins.Length}): {string.Join(", ", allowedOrigins)}");
+        Console.WriteLine($"[✓] Allowed Firefox Extensions ({allowedFirefoxExtensions.Length}): {string.Join(", ", allowedFirefoxExtensions)}");
+        Console.WriteLine($"[✓] Target NativeHost binary deployed at: {targetExePath}");
         return allSucceeded;
     }
 
     public static bool Uninstall()
     {
         bool allSucceeded = true;
-        foreach (var (browser, subKey) in RegistryTargets)
+        foreach (var (browser, subKey, _) in RegistryTargets)
         {
             try
             {
@@ -127,17 +198,320 @@ public static class HostInstaller
             }
         }
 
-        var manifestPath = GetManifestPath();
-        if (File.Exists(manifestPath))
+        foreach (var path in new[] { GetChromiumManifestPath(), GetFirefoxManifestPath() })
+        {
+            if (File.Exists(path))
+            {
+                try
+                {
+                    File.Delete(path);
+                    Console.WriteLine($"[✓] Removed manifest file: {path}");
+                }
+                catch { }
+            }
+        }
+
+        return allSucceeded;
+    }
+
+    private static string? FindSourceUiExecutable(string hostDir)
+    {
+        var candidates = new[]
+        {
+            Path.Combine(hostDir, "..", "WDM.UI", "WDM.UI.exe"),
+            Path.Combine(hostDir, "..", "UI", "WDM.UI.exe"),
+            Path.Combine(hostDir, "..", "WDM.UI.exe"),
+            Path.Combine(hostDir, "WDM.UI.exe"),
+            Path.Combine(hostDir, "..", "..", "bin", "WDM.UI", "WDM.UI.exe"),
+            Path.Combine(hostDir, "..", "..", "dist", "WDM-v1.0.0-windows-x64", "WDM.UI.exe"),
+            Path.Combine(hostDir, "..", "..", "src", "WDM.UI", "bin", "Release", "net10.0-windows", "win-x64", "WDM.UI.exe"),
+            Path.Combine(hostDir, "..", "..", "src", "WDM.UI", "bin", "Release", "net10.0-windows", "WDM.UI.exe"),
+            Path.Combine(hostDir, "..", "..", "src", "WDM.UI", "bin", "Debug", "net10.0-windows", "WDM.UI.exe")
+        };
+
+        foreach (var candidate in candidates)
         {
             try
             {
-                File.Delete(manifestPath);
-                Console.WriteLine("[✓] Removed manifest file.");
+                var full = Path.GetFullPath(candidate);
+                if (File.Exists(full)) return full;
             }
             catch { }
         }
 
-        return allSucceeded;
+        return null;
+    }
+
+    private static string? FindExtensionDirectory(string hostDir)
+    {
+        var candidates = new[]
+        {
+            Path.Combine(hostDir, "..", "..", "extension"),
+            Path.Combine(hostDir, "..", "extension"),
+            Path.Combine(hostDir, "extension")
+        };
+
+        foreach (var candidate in candidates)
+        {
+            try
+            {
+                var full = Path.GetFullPath(candidate).TrimEnd('\\', '/');
+                if (Directory.Exists(full) && File.Exists(Path.Combine(full, "manifest.json")))
+                {
+                    return full;
+                }
+            }
+            catch { }
+        }
+
+        return null;
+    }
+
+    private static string[] DiscoverChromiumAllowedOrigins(string? extensionDir)
+    {
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            // Known unpacked path ID for repo extension folder
+            "aemgoennlnmdpdcmbnejahkiimidblga"
+        };
+
+        // 1. Compute IDs from extension directory path and manifest.json "key" (if present)
+        if (!string.IsNullOrWhiteSpace(extensionDir) && Directory.Exists(extensionDir))
+        {
+            var normalized = Path.GetFullPath(extensionDir).TrimEnd('\\', '/');
+            ids.Add(ComputeChromiumIdFromBytes(Encoding.Unicode.GetBytes(normalized)));
+
+            if (normalized.Length >= 2 && normalized[1] == ':')
+            {
+                var upperDrive = char.ToUpperInvariant(normalized[0]) + normalized[1..];
+                var lowerDrive = char.ToLowerInvariant(normalized[0]) + normalized[1..];
+                ids.Add(ComputeChromiumIdFromBytes(Encoding.Unicode.GetBytes(upperDrive)));
+                ids.Add(ComputeChromiumIdFromBytes(Encoding.Unicode.GetBytes(lowerDrive)));
+            }
+
+            var manifestFile = Path.Combine(normalized, "manifest.json");
+            if (File.Exists(manifestFile))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(File.ReadAllText(manifestFile));
+                    if (doc.RootElement.TryGetProperty("key", out var keyProp) && keyProp.ValueKind == JsonValueKind.String)
+                    {
+                        var keyStr = keyProp.GetString();
+                        if (!string.IsNullOrWhiteSpace(keyStr))
+                        {
+                            var keyBytes = Convert.FromBase64String(keyStr);
+                            ids.Add(ComputeChromiumIdFromBytes(keyBytes));
+                        }
+                    }
+                }
+                catch { }
+            }
+        }
+
+        // 2. Scan Chrome, Edge, and Brave User Data Preferences / Secure Preferences for installed WDM extensions
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var browserUserDataDirs = new[]
+        {
+            Path.Combine(localAppData, "Microsoft", "Edge", "User Data"),
+            Path.Combine(localAppData, "Google", "Chrome", "User Data"),
+            Path.Combine(localAppData, "BraveSoftware", "Brave-Browser", "User Data")
+        };
+
+        foreach (var userDataDir in browserUserDataDirs)
+        {
+            if (!Directory.Exists(userDataDir)) continue;
+
+            try
+            {
+                foreach (var prefFile in Directory.EnumerateFiles(userDataDir, "*Preferences", SearchOption.AllDirectories))
+                {
+                    var fileName = Path.GetFileName(prefFile);
+                    if (!string.Equals(fileName, "Preferences", StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(fileName, "Secure Preferences", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        var content = File.ReadAllText(prefFile);
+                        if (!content.Contains("WDM", StringComparison.OrdinalIgnoreCase)) continue;
+
+                        using var doc = JsonDocument.Parse(content);
+                        if (doc.RootElement.TryGetProperty("extensions", out var extObj) &&
+                            extObj.TryGetProperty("settings", out var settingsObj) &&
+                            settingsObj.ValueKind == JsonValueKind.Object)
+                        {
+                            foreach (var prop in settingsObj.EnumerateObject())
+                            {
+                                if (prop.Name.Length == 32 && IsValidChromiumId(prop.Name))
+                                {
+                                    var raw = prop.Value.GetRawText();
+                                    if (raw.Contains("WDM", StringComparison.OrdinalIgnoreCase) ||
+                                        raw.Contains("Windows Download Manager", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        ids.Add(prop.Name.ToLowerInvariant());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+        }
+
+        return ids
+            .Where(IsValidChromiumId)
+            .Select(id => $"chrome-extension://{id.ToLowerInvariant()}/")
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static string[] DiscoverFirefoxAllowedExtensions()
+    {
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "wdm-downloader@local",
+            "wdm-downloader@wdm.local",
+            "{2a3e3cb2-c5c7-46b3-bc78-fae08fc0f578}",
+            "2a3e3cb2-c5c7-46b3-bc78-fae08fc0f578@temporary-addon"
+        };
+
+        try
+        {
+            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            var firefoxProfilesDir = Path.Combine(appData, "Mozilla", "Firefox", "Profiles");
+            if (Directory.Exists(firefoxProfilesDir))
+            {
+                foreach (var profileDir in Directory.GetDirectories(firefoxProfilesDir))
+                {
+                    // 1. Scan prefs.js for registered extension IDs
+                    var prefsFile = Path.Combine(profileDir, "prefs.js");
+                    if (File.Exists(prefsFile))
+                    {
+                        try
+                        {
+                            foreach (var line in File.ReadLines(prefsFile))
+                            {
+                                if (line.Contains("extensions.webextensions.uuids", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    var match = Regex.Match(line, @"user_pref\(""extensions\.webextensions\.uuids"",\s*""(.*?)""\);");
+                                    if (match.Success)
+                                    {
+                                        var jsonEscaped = match.Groups[1].Value.Replace(@"\""", "\"");
+                                        using var doc = JsonDocument.Parse(jsonEscaped);
+                                        foreach (var prop in doc.RootElement.EnumerateObject())
+                                        {
+                                            var key = prop.Name;
+                                            var val = prop.Value.GetString();
+                                            if (key.Contains("wdm", StringComparison.OrdinalIgnoreCase) ||
+                                                (val != null && val.Contains("wdm", StringComparison.OrdinalIgnoreCase)))
+                                            {
+                                                if (IsValidFirefoxExtensionId(key))
+                                                {
+                                                    ids.Add(key);
+                                                }
+                                                if (!string.IsNullOrWhiteSpace(val))
+                                                {
+                                                    var cleanGuid = val.Trim('{', '}');
+                                                    var bracedGuid = $"{{{cleanGuid}}}";
+                                                    var tempAddonId = $"{cleanGuid}@temporary-addon";
+                                                    if (IsValidFirefoxExtensionId(bracedGuid)) ids.Add(bracedGuid);
+                                                    if (IsValidFirefoxExtensionId(tempAddonId)) ids.Add(tempAddonId);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        catch { }
+                    }
+
+                    // 2. Scan extensions.json for installed addons
+                    var extJsonFile = Path.Combine(profileDir, "extensions.json");
+                    if (File.Exists(extJsonFile))
+                    {
+                        try
+                        {
+                            using var doc = JsonDocument.Parse(File.ReadAllText(extJsonFile));
+                            if (doc.RootElement.TryGetProperty("addons", out var addons) && addons.ValueKind == JsonValueKind.Array)
+                            {
+                                foreach (var addon in addons.EnumerateArray())
+                                {
+                                    var id = addon.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
+                                    var name = addon.TryGetProperty("name", out var nProp) ? nProp.GetString() : null;
+                                    if (!string.IsNullOrWhiteSpace(id) &&
+                                        (id.Contains("wdm", StringComparison.OrdinalIgnoreCase) ||
+                                         (name != null && name.Contains("WDM", StringComparison.OrdinalIgnoreCase))))
+                                    {
+                                        if (IsValidFirefoxExtensionId(id))
+                                        {
+                                            ids.Add(id);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        catch { }
+                    }
+                }
+            }
+        }
+        catch { }
+
+        return ids.Where(IsValidFirefoxExtensionId).ToArray();
+    }
+
+    private static bool IsValidFirefoxExtensionId(string id)
+    {
+        if (string.IsNullOrWhiteSpace(id)) return false;
+        // Firefox NativeHostManifest schema requires ExtensionID to match either:
+        // 1. ^{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}}$
+        // 2. ^[a-zA-Z0-9-._]*@[a-zA-Z0-9-._]+$
+        return Regex.IsMatch(id, @"^(\{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\}|[a-zA-Z0-9\-._]+@[a-zA-Z0-9\-._]+)$");
+    }
+
+    public static string ComputeChromiumIdFromBytes(byte[] input)
+    {
+        var hash = SHA256.HashData(input);
+        Span<char> chars = stackalloc char[32];
+        for (int i = 0; i < 16; i++)
+        {
+            byte b = hash[i];
+            chars[i * 2] = (char)('a' + ((b >> 4) & 0xF));
+            chars[i * 2 + 1] = (char)('a' + (b & 0xF));
+        }
+        return new string(chars);
+    }
+
+    private static bool IsValidChromiumId(string id)
+    {
+        if (string.IsNullOrWhiteSpace(id) || id.Length != 32) return false;
+        foreach (var ch in id)
+        {
+            if (ch < 'a' || ch > 'p') return false;
+        }
+        return true;
+    }
+
+    private static void CopyDirectoryRecursive(string sourceDir, string targetDir)
+    {
+        Directory.CreateDirectory(targetDir);
+
+        foreach (var file in Directory.GetFiles(sourceDir))
+        {
+            var destFile = Path.Combine(targetDir, Path.GetFileName(file));
+            File.Copy(file, destFile, overwrite: true);
+        }
+
+        foreach (var subDir in Directory.GetDirectories(sourceDir))
+        {
+            var destSubDir = Path.Combine(targetDir, Path.GetFileName(subDir));
+            CopyDirectoryRecursive(subDir, destSubDir);
+        }
     }
 }

@@ -18,7 +18,10 @@ public partial class MainWindow : Window
     private readonly MediaExtractor _mediaExtractor = new();
     private readonly ConcurrentDictionary<string, DownloadEngine> _activeEngines = new();
     private readonly string _historyFilePath;
+    private readonly string _ipcEventsFilePath;
+    private long _ipcLastPosition;
     private bool _isInitialized;
+    private bool _isWebLoaded;
 
     public MainWindow()
     {
@@ -27,8 +30,37 @@ public partial class MainWindow : Window
         var appData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WDM");
         Directory.CreateDirectory(appData);
         _historyFilePath = Path.Combine(appData, "downloads_history.json");
+        _ipcEventsFilePath = Path.Combine(appData, "extension_events.jsonl");
+
+        // Start tailing from the end of existing file (or recent 32KB so active extension downloads appear)
+        if (File.Exists(_ipcEventsFilePath))
+        {
+            try
+            {
+                var len = new FileInfo(_ipcEventsFilePath).Length;
+                _ipcLastPosition = Math.Max(0, len - 32768);
+            }
+            catch { }
+        }
 
         Loaded += OnWindowLoaded;
+    }
+
+    private void BringToFront()
+    {
+        try
+        {
+            if (WindowState == WindowState.Minimized)
+            {
+                WindowState = WindowState.Normal;
+            }
+            Show();
+            Activate();
+            Topmost = true;
+            Topmost = false;
+            Focus();
+        }
+        catch { }
     }
 
     private async void OnWindowLoaded(object sender, RoutedEventArgs e)
@@ -94,6 +126,24 @@ public partial class MainWindow : Window
             };
 
             WebView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
+            WebView.CoreWebView2.NavigationCompleted += (_, _) =>
+            {
+                if (_isWebLoaded) return;
+                _isWebLoaded = true;
+
+                // Handle command-line URL if WDM.UI was launched with a URL argument
+                var args = Environment.GetCommandLineArgs();
+                if (args.Length > 1 && !string.IsNullOrWhiteSpace(args[1]) &&
+                    (args[1].StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                     args[1].StartsWith("https://", StringComparison.OrdinalIgnoreCase)))
+                {
+                    PostToWeb(new { action = "open_url", url = args[1] });
+                }
+
+                StartExtensionIpcTailer();
+            };
+
+            BringToFront();
 
             var htmlPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wwwroot", "index.html");
             if (File.Exists(htmlPath))
@@ -109,6 +159,63 @@ public partial class MainWindow : Window
         {
             MessageBox.Show($"Failed to initialize WebView2: {ex.Message}", "WDM Initialization Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+    }
+
+    private void StartExtensionIpcTailer()
+    {
+        var timer = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(400)
+        };
+
+        timer.Tick += (_, _) =>
+        {
+            try
+            {
+                if (!File.Exists(_ipcEventsFilePath)) return;
+
+                using var fs = new FileStream(_ipcEventsFilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                if (fs.Length < _ipcLastPosition)
+                {
+                    _ipcLastPosition = 0;
+                }
+                if (fs.Length == _ipcLastPosition) return;
+
+                fs.Seek(_ipcLastPosition, SeekOrigin.Begin);
+                using var reader = new StreamReader(fs);
+                string? line;
+                while ((line = reader.ReadLine()) != null)
+                {
+                    if (string.IsNullOrWhiteSpace(line) || !line.TrimStart().StartsWith('{')) continue;
+
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(line);
+                        var root = doc.RootElement;
+                        var action = root.TryGetProperty("action", out var aProp) ? aProp.GetString() : null;
+
+                        if (action == "bring_to_front")
+                        {
+                            BringToFront();
+                            if (root.TryGetProperty("url", out var uProp) && uProp.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(uProp.GetString()))
+                            {
+                                PostToWeb(new { action = "open_url", url = uProp.GetString() });
+                            }
+                        }
+                        else if (!string.IsNullOrWhiteSpace(action))
+                        {
+                            WebView?.CoreWebView2?.PostWebMessageAsJson(line);
+                        }
+                    }
+                    catch { }
+                }
+
+                _ipcLastPosition = fs.Position;
+            }
+            catch { }
+        };
+
+        timer.Start();
     }
 
     protected override void OnClosed(EventArgs e)
