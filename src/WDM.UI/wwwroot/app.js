@@ -575,6 +575,10 @@
           }
         }
         break;
+
+      case 'update_progress':
+        handleUpdateProgress(msg.percentage, msg.status);
+        break;
     }
   }
 
@@ -1284,6 +1288,186 @@
 
     return result;
   }
+
+  // Built-in OTA Update Checker & Local Workspace Hot-Sync
+  const badgeUpdateAvailable = document.getElementById('badgeUpdateAvailable');
+  const infoCurrentVersionBadge = document.getElementById('infoCurrentVersionBadge');
+  const updateStatusBadge = document.getElementById('updateStatusBadge');
+  const updateStatusSubtext = document.getElementById('updateStatusSubtext');
+  const settingsUpdateSubtext = document.getElementById('settingsUpdateSubtext');
+  const btnCheckUpdates = document.getElementById('btnCheckUpdates');
+  const btnSettingsCheckUpdates = document.getElementById('btnSettingsCheckUpdates');
+  const btnInstallGitHubUpdate = document.getElementById('btnInstallGitHubUpdate');
+  const btnSyncLocalRepo = document.getElementById('btnSyncLocalRepo');
+  const btnSettingsSyncLocal = document.getElementById('btnSettingsSyncLocal');
+  const updateProgressBox = document.getElementById('updateProgressBox');
+  const updateProgressStatus = document.getElementById('updateProgressStatus');
+  const updateProgressPct = document.getElementById('updateProgressPct');
+  const updateProgressBar = document.getElementById('updateProgressBar');
+
+  let lastUpdateCheckResult = null;
+
+  async function runUpdateCheck(manual = false) {
+    if (btnCheckUpdates) {
+      btnCheckUpdates.disabled = true;
+      btnCheckUpdates.querySelector('span').textContent = 'Checking...';
+    }
+    if (btnSettingsCheckUpdates) {
+      btnSettingsCheckUpdates.disabled = true;
+      btnSettingsCheckUpdates.querySelector('span').textContent = 'Checking...';
+    }
+    if (manual && updateStatusSubtext) {
+      updateStatusSubtext.textContent = 'Contacting GitHub Releases and scanning local source repository...';
+    }
+
+    try {
+      const res = await sendToHost('check_updates');
+      lastUpdateCheckResult = res;
+
+      if (infoCurrentVersionBadge && res.currentVersion) {
+        infoCurrentVersionBadge.textContent = `Version ${res.currentVersion} (Official Release)`;
+      }
+
+      // Show/hide Local Hot-Sync buttons if developer repository exists on disk
+      if (res.hasLocalRepo) {
+        if (btnSyncLocalRepo) btnSyncLocalRepo.style.display = 'inline-flex';
+        if (btnSettingsSyncLocal) btnSettingsSyncLocal.style.display = 'inline-flex';
+      }
+
+      if (res.isUpdateAvailable && res.downloadUrl) {
+        if (badgeUpdateAvailable) {
+          badgeUpdateAvailable.textContent = `v${res.latestVersion}`;
+          badgeUpdateAvailable.style.display = 'inline-block';
+        }
+        if (updateStatusBadge) {
+          updateStatusBadge.textContent = `Update v${res.latestVersion} Available`;
+          updateStatusBadge.className = 'status-pill blue';
+        }
+        if (updateStatusSubtext) {
+          updateStatusSubtext.textContent = `New release ${res.releaseTitle || 'v' + res.latestVersion} is ready to install without losing settings or extensions.`;
+        }
+        if (settingsUpdateSubtext) {
+          settingsUpdateSubtext.textContent = `Update v${res.latestVersion} available! Click to install in-place.`;
+        }
+        if (btnInstallGitHubUpdate) {
+          btnInstallGitHubUpdate.style.display = 'inline-flex';
+        }
+        if (manual) {
+          showToast(`New update v${res.latestVersion} is available!`);
+        }
+      } else if (res.hasLocalChanges) {
+        if (badgeUpdateAvailable) {
+          badgeUpdateAvailable.textContent = 'Code Edited';
+          badgeUpdateAvailable.style.display = 'inline-block';
+        }
+        if (updateStatusBadge) {
+          updateStatusBadge.textContent = 'Local Code Modified';
+          updateStatusBadge.className = 'status-pill blue';
+        }
+        const modInfo = res.localLastModifiedText || 'Recent code edits detected in local repository';
+        if (updateStatusSubtext) {
+          updateStatusSubtext.textContent = `${modInfo}. Click "Sync Local Code & Restart" to compile and hot-swap in place.`;
+        }
+        if (settingsUpdateSubtext) {
+          settingsUpdateSubtext.textContent = `${modInfo} — Ready to hot-sync without reinstalling.`;
+        }
+        if (manual) {
+          showToast('Local repository code changes detected! Ready to hot-sync.');
+        }
+      } else {
+        if (badgeUpdateAvailable) badgeUpdateAvailable.style.display = 'none';
+        if (updateStatusBadge) {
+          updateStatusBadge.textContent = 'Up to Date';
+          updateStatusBadge.className = 'status-pill green';
+        }
+        if (btnInstallGitHubUpdate) btnInstallGitHubUpdate.style.display = 'none';
+
+        const repoNote = res.hasLocalRepo ? ` • Local repo linked (${res.localRepoPath})` : '';
+        if (updateStatusSubtext) {
+          updateStatusSubtext.textContent = `WDM v${res.currentVersion || '1.0.0'} is running the latest version${repoNote}.`;
+        }
+        if (settingsUpdateSubtext) {
+          settingsUpdateSubtext.textContent = `Running latest version (v${res.currentVersion || '1.0.0'})${res.hasLocalRepo ? ' • Local hot-sync ready' : ''}.`;
+        }
+        if (manual) {
+          showToast(`WDM v${res.currentVersion || '1.0.0'} is up to date!`);
+        }
+      }
+    } catch {
+      if (manual) showToast('Could not complete update check.');
+    } finally {
+      if (btnCheckUpdates) {
+        btnCheckUpdates.disabled = false;
+        btnCheckUpdates.querySelector('span').textContent = 'Check for Updates';
+      }
+      if (btnSettingsCheckUpdates) {
+        btnSettingsCheckUpdates.disabled = false;
+        btnSettingsCheckUpdates.querySelector('span').textContent = 'Check Updates';
+      }
+    }
+  }
+
+  function handleUpdateProgress(percentage, statusText) {
+    if (updateProgressBox) updateProgressBox.style.display = 'block';
+    if (updateProgressStatus && statusText) updateProgressStatus.textContent = statusText;
+    if (updateProgressPct && percentage !== undefined) updateProgressPct.textContent = `${Math.round(percentage)}%`;
+    if (updateProgressBar && percentage !== undefined) updateProgressBar.style.width = `${Math.min(100, Math.max(0, percentage))}%`;
+  }
+
+  async function triggerLocalHotSync() {
+    const infoTab = document.querySelector('.nav-item[data-tab="info"]');
+    if (infoTab && !infoTab.classList.contains('active')) infoTab.click();
+
+    if (btnSyncLocalRepo) btnSyncLocalRepo.disabled = true;
+    if (btnSettingsSyncLocal) btnSettingsSyncLocal.disabled = true;
+    if (btnCheckUpdates) btnCheckUpdates.disabled = true;
+
+    handleUpdateProgress(5, 'Starting local .NET 10 release build & hot-sync...');
+    showToast('Compiling local code changes & syncing...');
+
+    const res = await sendToHost('sync_local_repo', {
+      repoPath: lastUpdateCheckResult?.localRepoPath || null
+    });
+
+    if (!res?.success) {
+      showToast(res?.message || 'Hot-sync failed.');
+      if (updateProgressStatus) updateProgressStatus.textContent = res?.message || 'Build failed.';
+      if (btnSyncLocalRepo) btnSyncLocalRepo.disabled = false;
+      if (btnSettingsSyncLocal) btnSettingsSyncLocal.disabled = false;
+      if (btnCheckUpdates) btnCheckUpdates.disabled = false;
+    }
+  }
+
+  async function triggerGitHubUpdate() {
+    if (!lastUpdateCheckResult?.downloadUrl) {
+      showToast('No release package URL available.');
+      return;
+    }
+
+    if (btnInstallGitHubUpdate) btnInstallGitHubUpdate.disabled = true;
+    if (btnCheckUpdates) btnCheckUpdates.disabled = true;
+
+    handleUpdateProgress(5, 'Initializing GitHub release download...');
+    const res = await sendToHost('apply_github_update', {
+      downloadUrl: lastUpdateCheckResult.downloadUrl
+    });
+
+    if (!res?.success) {
+      showToast(res?.message || 'Update failed.');
+      if (updateProgressStatus) updateProgressStatus.textContent = res?.message || 'Update failed.';
+      if (btnInstallGitHubUpdate) btnInstallGitHubUpdate.disabled = false;
+      if (btnCheckUpdates) btnCheckUpdates.disabled = false;
+    }
+  }
+
+  if (btnCheckUpdates) btnCheckUpdates.addEventListener('click', () => runUpdateCheck(true));
+  if (btnSettingsCheckUpdates) btnSettingsCheckUpdates.addEventListener('click', () => runUpdateCheck(true));
+  if (btnSyncLocalRepo) btnSyncLocalRepo.addEventListener('click', triggerLocalHotSync);
+  if (btnSettingsSyncLocal) btnSettingsSyncLocal.addEventListener('click', triggerLocalHotSync);
+  if (btnInstallGitHubUpdate) btnInstallGitHubUpdate.addEventListener('click', triggerGitHubUpdate);
+
+  // Automatically check for updates & local code modifications 1.5s after startup
+  setTimeout(() => runUpdateCheck(false), 1500);
 
   // Utility
   function formatBytes(bytes) {

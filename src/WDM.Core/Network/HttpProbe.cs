@@ -68,6 +68,8 @@ public sealed class HttpProbe
         long? totalBytes = null;
         bool acceptsRanges = false;
 
+        var isRangeRequest = response.RequestMessage?.Headers.Range != null;
+
         // Check Content-Range header (e.g., "bytes 0-0/104857600")
         if (response.Content.Headers.ContentRange != null)
         {
@@ -78,14 +80,20 @@ public sealed class HttpProbe
             }
         }
 
-        // Check standard Content-Length
-        if (!totalBytes.HasValue && response.Content.Headers.ContentLength.HasValue)
+        // Check standard Content-Length (only when full 200 OK response or HEAD, not a 1-byte 206 PartialContent slice)
+        if (!totalBytes.HasValue && response.StatusCode != HttpStatusCode.PartialContent && response.Content.Headers.ContentLength.HasValue)
         {
             totalBytes = response.Content.Headers.ContentLength.Value;
         }
 
-        // Check Accept-Ranges header
-        if (response.Headers.AcceptRanges.Contains("bytes") || response.StatusCode == HttpStatusCode.PartialContent)
+        // Check Accept-Ranges header:
+        // If we explicitly sent a Range header and the server replied 200 OK instead of 206 PartialContent,
+        // the server ignored our Range header and does NOT support range requests on this endpoint.
+        if (response.StatusCode == HttpStatusCode.PartialContent)
+        {
+            acceptsRanges = true;
+        }
+        else if (!isRangeRequest && response.Headers.AcceptRanges.Contains("bytes"))
         {
             acceptsRanges = true;
         }

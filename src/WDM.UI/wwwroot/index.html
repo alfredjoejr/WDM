@@ -55,6 +55,7 @@
         <button class="nav-item" data-tab="info">
           <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
           <span>Info</span>
+          <span class="nav-badge green" id="badgeUpdateAvailable" style="display: none;">Update</span>
         </button>
       </nav>
 
@@ -289,6 +290,21 @@
               </div>
               <span class="status-pill green">Active & Connected</span>
             </div>
+
+            <div class="ios-cell">
+              <div class="cell-label">
+                <h4>Software Updates & Local Hot-Sync</h4>
+                <p id="settingsUpdateSubtext">Check GitHub Releases or hot-sync local code changes without reinstalling.</p>
+              </div>
+              <div class="link-action-group" style="display: flex; gap: 8px; align-items: center;">
+                <button class="apple-btn apple-btn-glass" id="btnSettingsSyncLocal" style="display: none; height: 32px; padding: 0 12px; font-size: 12px;">
+                  <span>⚡ Sync Local Code</span>
+                </button>
+                <button class="apple-btn apple-btn-primary" id="btnSettingsCheckUpdates" style="height: 32px; padding: 0 12px; font-size: 12px;">
+                  <span>Check Updates</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -304,13 +320,48 @@
               <h2>WDM — Windows Download Manager</h2>
               <p>High-speed, multi-connection accelerated download manager & media grabber for Windows.</p>
               <div class="version-badges">
-                <span class="status-pill blue">Version 1.0.0 (Official Release)</span>
+                <span class="status-pill blue" id="infoCurrentVersionBadge">Version 1.0.0 (Official Release)</span>
                 <span class="status-pill green">.NET 10 Evergreen</span>
               </div>
             </div>
           </div>
 
+          <!-- Built-in OTA Update & Local Hot-Sync Card -->
           <div class="ios-group-list glass-panel" style="margin-top: 20px;">
+            <div class="ios-cell" style="flex-wrap: wrap; gap: 12px;">
+              <div class="cell-label" style="flex: 1; min-width: 240px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <h4>Software Update & Hot-Sync</h4>
+                  <span class="status-pill green" id="updateStatusBadge" style="font-size: 11px; padding: 2px 8px;">Up to Date</span>
+                </div>
+                <p id="updateStatusSubtext" style="margin-top: 4px;">Checking GitHub Releases and local workspace status...</p>
+              </div>
+              <div class="link-action-group" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                <button class="apple-btn apple-btn-glass" id="btnCheckUpdates" style="height: 34px; padding: 0 14px;">
+                  <span>Check for Updates</span>
+                </button>
+                <button class="apple-btn apple-btn-glass" id="btnSyncLocalRepo" style="display: none; height: 34px; padding: 0 14px; border-color: rgba(56, 165, 255, 0.45); color: #38a5ff;">
+                  <span>⚡ Sync Local Code & Restart</span>
+                </button>
+                <button class="apple-btn apple-btn-primary" id="btnInstallGitHubUpdate" style="display: none; height: 34px; padding: 0 14px;">
+                  <span>Download & Install Update</span>
+                </button>
+              </div>
+
+              <!-- Live Update / Build Progress Drawer -->
+              <div id="updateProgressBox" style="display: none; width: 100%; margin-top: 8px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.07);">
+                <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px;">
+                  <span id="updateProgressStatus" style="color: var(--label-secondary);">Preparing update...</span>
+                  <b id="updateProgressPct" style="color: #38a5ff; font-family: 'JetBrains Mono', monospace;">0%</b>
+                </div>
+                <div class="sys-meter-track" style="height: 6px;">
+                  <div class="sys-meter-fill" id="updateProgressBar" style="width: 0%; transition: width 0.25s ease;"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="ios-group-list glass-panel" style="margin-top: 16px;">
             <div class="ios-cell">
               <div class="cell-label">
                 <h4>Developer</h4>

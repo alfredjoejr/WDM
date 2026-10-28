@@ -21,6 +21,8 @@ public sealed class HostService
     private readonly ConcurrentDictionary<string, DownloadEngine> _activeDownloads = new();
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _activeMediaDownloads = new();
     private static readonly object IpcLock = new();
+    private static readonly object UiLaunchLock = new();
+    private static DateTime _lastUiLaunchUtc = DateTime.MinValue;
 
     public HostService()
     {
@@ -217,7 +219,7 @@ public sealed class HostService
         var url = root.GetProperty("url").GetString()!;
         var customFileName = root.TryGetProperty("fileName", out var fProp) ? fProp.GetString() : null;
         var connections = root.TryGetProperty("connections", out var cProp) ? cProp.GetInt32() : 16;
-        
+
         Dictionary<string, string>? headers = null;
         if (root.TryGetProperty("headers", out var hProp) && hProp.ValueKind == JsonValueKind.Object)
         {
@@ -229,10 +231,25 @@ public sealed class HostService
         }
 
         var downloadId = Guid.NewGuid().ToString("N");
-        var engine = new DownloadEngine();
-        _activeDownloads[downloadId] = engine;
 
-        var startEvent = new
+        // Ensure WDM.UI is running (outside the browser's Job Object) and delegate the download to WDM.UI
+        // so that closing the browser never interrupts active downloads or kills WDM.UI.
+        EnsureUiRunning();
+
+        var ipcCommand = new
+        {
+            requestId,
+            action = "ipc_start_download",
+            downloadId,
+            url,
+            fileName = customFileName,
+            connections,
+            headers,
+            timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        };
+        BroadcastToUi(ipcCommand);
+
+        var startAck = new
         {
             requestId,
             action = "download_started",
@@ -241,88 +258,7 @@ public sealed class HostService
             fileName = customFileName,
             timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         };
-
-        // Acknowledge start immediately to browser and UI
-        await HostProtocol.SendMessageAsync(startEvent, ct);
-        BroadcastToUi(startEvent);
-
-        // Run download in background and stream progress back
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                engine.ProgressChanged += async snapshot =>
-                {
-                    var progressEvent = new
-                    {
-                        action = "download_progress",
-                        downloadId,
-                        url,
-                        fileName = customFileName,
-                        percentage = snapshot.ProgressPercentage,
-                        speed = snapshot.SpeedFormatted,
-                        speedBytes = snapshot.SpeedBytesPerSecond,
-                        downloaded = snapshot.DownloadedFormatted,
-                        total = snapshot.TotalFormatted,
-                        eta = snapshot.EstimatedRemainingTime.HasValue ? $"{snapshot.EstimatedRemainingTime.Value:mm\\:ss}" : "--:--",
-                        activeConnections = snapshot.ActiveConnections,
-                        timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-                    };
-                    await HostProtocol.SendMessageAsync(progressEvent);
-                    BroadcastToUi(progressEvent);
-                };
-
-                var options = new DownloadOptions
-                {
-                    Url = url,
-                    CustomFileName = customFileName,
-                    Connections = connections,
-                    CustomHeaders = headers
-                };
-
-                var savedPath = await engine.StartAsync(options);
-                var hash = await ChecksumVerifier.ComputeHashAsync(savedPath);
-
-                var completedEvent = new
-                {
-                    action = "download_completed",
-                    downloadId,
-                    filePath = savedPath,
-                    sha256 = hash,
-                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-                };
-                await HostProtocol.SendMessageAsync(completedEvent);
-                BroadcastToUi(completedEvent);
-            }
-            catch (OperationCanceledException)
-            {
-                var failedEvent = new
-                {
-                    action = "download_failed",
-                    downloadId,
-                    error = "Download stopped by user",
-                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-                };
-                await HostProtocol.SendMessageAsync(failedEvent);
-                BroadcastToUi(failedEvent);
-            }
-            catch (Exception ex)
-            {
-                var failedEvent = new
-                {
-                    action = "download_failed",
-                    downloadId,
-                    error = ex.Message,
-                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-                };
-                await HostProtocol.SendMessageAsync(failedEvent);
-                BroadcastToUi(failedEvent);
-            }
-            finally
-            {
-                _activeDownloads.TryRemove(downloadId, out _);
-            }
-        }, ct);
+        await HostProtocol.SendMessageAsync(startAck, ct);
     }
 
     private async Task HandleSniffMediaAsync(JsonElement root, string requestId, CancellationToken ct)
@@ -378,10 +314,26 @@ public sealed class HostService
         var destinationDirectory = root.TryGetProperty("destinationDirectory", out var dProp) ? dProp.GetString() : null;
 
         var downloadId = Guid.NewGuid().ToString("N");
-        var cts = new CancellationTokenSource();
-        _activeMediaDownloads[downloadId] = cts;
 
-        var startEvent = new
+        // Ensure WDM.UI is running (outside the browser's Job Object) and delegate the media download to WDM.UI
+        // so that closing the browser never terminates yt-dlp or WDM.UI.
+        EnsureUiRunning();
+
+        var ipcCommand = new
+        {
+            requestId,
+            action = "ipc_download_media",
+            downloadId,
+            url,
+            fileName = fileName ?? "Media Video.mp4",
+            formatId,
+            isAudioOnly,
+            destinationDirectory,
+            timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        };
+        BroadcastToUi(ipcCommand);
+
+        var startAck = new
         {
             requestId,
             action = "media_download_started",
@@ -393,82 +345,7 @@ public sealed class HostService
             destinationDirectory,
             timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         };
-
-        await HostProtocol.SendMessageAsync(startEvent, ct);
-        BroadcastToUi(startEvent);
-
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                var completedPath = await _mediaExtractor.DownloadMediaAsync(
-                    url,
-                    formatId,
-                    destinationDirectory,
-                    fileName,
-                    isAudioOnly,
-                    progressCallback: async (percent, line) =>
-                    {
-                        var progressEvent = new
-                        {
-                            action = "media_download_progress",
-                            downloadId,
-                            url,
-                            fileName = fileName ?? "Media Video.mp4",
-                            formatId,
-                            isAudioOnly,
-                            destinationDirectory,
-                            percentage = percent,
-                            statusText = line,
-                            status = line,
-                            timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-                        };
-                        await HostProtocol.SendMessageAsync(progressEvent);
-                        BroadcastToUi(progressEvent);
-                    },
-                    cancellationToken: cts.Token);
-
-                var completedEvent = new
-                {
-                    action = "media_download_completed",
-                    downloadId,
-                    filePath = completedPath,
-                    destinationDirectory = Path.GetDirectoryName(completedPath) ?? targetDirOrNull(completedPath),
-                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-                };
-                await HostProtocol.SendMessageAsync(completedEvent);
-                BroadcastToUi(completedEvent);
-            }
-            catch (OperationCanceledException)
-            {
-                var failedEvent = new
-                {
-                    action = "media_download_failed",
-                    downloadId,
-                    error = "Download stopped by user",
-                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-                };
-                await HostProtocol.SendMessageAsync(failedEvent);
-                BroadcastToUi(failedEvent);
-            }
-            catch (Exception ex)
-            {
-                var failedEvent = new
-                {
-                    action = "media_download_failed",
-                    downloadId,
-                    error = ex.Message,
-                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-                };
-                await HostProtocol.SendMessageAsync(failedEvent);
-                BroadcastToUi(failedEvent);
-            }
-            finally
-            {
-                _activeMediaDownloads.TryRemove(downloadId, out _);
-                cts.Dispose();
-            }
-        }, ct);
+        await HostProtocol.SendMessageAsync(startAck, ct);
     }
 
     public void HandleCancelDownload(JsonElement root)
@@ -495,121 +372,251 @@ public sealed class HostService
 
     private static string targetDirOrNull(string path) => Directory.Exists(path) ? path : (Path.GetDirectoryName(path) ?? string.Empty);
 
-    private static (bool Success, string? Message) HandleOpenApp(JsonElement root)
+    private static (bool Success, string? Message) EnsureUiRunning(string? targetUrl = null, bool broadcastBringToFront = false)
     {
         try
         {
-            var targetUrl = root.TryGetProperty("url", out var uProp) && uProp.ValueKind == JsonValueKind.String
-                ? uProp.GetString()
-                : null;
-
-            BroadcastToUi(new
+            if (broadcastBringToFront)
             {
-                action = "bring_to_front",
-                url = targetUrl,
-                timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-            });
+                BroadcastToUi(new
+                {
+                    action = "bring_to_front",
+                    url = targetUrl,
+                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                });
+            }
 
-            // 1. Check if WDM.UI is already running
-            var existingProcesses = Process.GetProcessesByName("WDM.UI");
-            if (existingProcesses.Length > 0)
+            lock (UiLaunchLock)
             {
-                foreach (var proc in existingProcesses)
+                // 1. Check if WDM.UI is already running
+                var existingProcesses = Process.GetProcessesByName("WDM.UI");
+                if (existingProcesses.Length > 0)
+                {
+                    foreach (var proc in existingProcesses)
+                    {
+                        try
+                        {
+                            proc.Refresh();
+                            if (proc.MainWindowHandle != IntPtr.Zero)
+                            {
+                                ShowWindow(proc.MainWindowHandle, IsIconic(proc.MainWindowHandle) ? SW_RESTORE : SW_SHOW);
+                                SwitchToThisWindow(proc.MainWindowHandle, true);
+                                SetForegroundWindow(proc.MainWindowHandle);
+                            }
+                        }
+                        catch { }
+                    }
+
+                    Program.Log("EnsureUiRunning: Signaled existing WDM.UI instance to come to foreground.");
+                    return (true, null);
+                }
+
+                // Debounce rapid consecutive launch requests (e.g., download_media + open_app arriving 1ms apart)
+                if ((DateTime.UtcNow - _lastUiLaunchUtc).TotalSeconds < 4)
+                {
+                    Program.Log("EnsureUiRunning: UI launch already in progress (debounced).");
+                    return (true, null);
+                }
+
+                // 2. Locate WDM.UI.exe across LocalAppData, host_config.json, and workspace directories
+                var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                var wdmAppData = Path.Combine(localAppData, "WDM");
+                var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+
+                var candidates = new List<string>
+                {
+                    Path.Combine(wdmAppData, "UI", "WDM.UI.exe"),
+                    Path.Combine(wdmAppData, "WDM.UI", "WDM.UI.exe"),
+                    Path.Combine(wdmAppData, "WDM.UI.exe")
+                };
+
+                var configPath = Path.Combine(wdmAppData, "host_config.json");
+                if (File.Exists(configPath))
                 {
                     try
                     {
-                        proc.Refresh();
-                        if (proc.MainWindowHandle != IntPtr.Zero)
+                        using var doc = JsonDocument.Parse(File.ReadAllText(configPath));
+                        if (doc.RootElement.TryGetProperty("installedUiExePath", out var p1) && p1.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(p1.GetString()))
                         {
-                            ShowWindow(proc.MainWindowHandle, IsIconic(proc.MainWindowHandle) ? SW_RESTORE : SW_SHOW);
-                            SwitchToThisWindow(proc.MainWindowHandle, true);
-                            SetForegroundWindow(proc.MainWindowHandle);
+                            candidates.Add(p1.GetString()!);
+                        }
+                        if (doc.RootElement.TryGetProperty("sourceUiExePath", out var p2) && p2.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(p2.GetString()))
+                        {
+                            candidates.Add(p2.GetString()!);
                         }
                     }
                     catch { }
                 }
 
-                Program.Log("HandleOpenApp: Signaled existing WDM.UI instance to come to foreground.");
-                return (true, null);
-            }
+                candidates.AddRange([
+                    Path.Combine(baseDir, "..", "WDM.UI", "WDM.UI.exe"),
+                    Path.Combine(baseDir, "..", "UI", "WDM.UI.exe"),
+                    Path.Combine(baseDir, "WDM.UI.exe"),
+                    Path.Combine(baseDir, "..", "WDM.UI.exe"),
+                    Path.Combine(baseDir, "..", "..", "bin", "WDM.UI", "WDM.UI.exe"),
+                    Path.Combine(baseDir, "..", "..", "dist", "WDM-v1.0.0-windows-x64", "WDM.UI.exe"),
+                    Path.Combine(baseDir, "..", "..", "src", "WDM.UI", "bin", "Release", "net10.0-windows", "win-x64", "WDM.UI.exe"),
+                    Path.Combine(baseDir, "..", "..", "src", "WDM.UI", "bin", "Release", "net10.0-windows", "WDM.UI.exe"),
+                    Path.Combine(baseDir, "..", "..", "src", "WDM.UI", "bin", "Debug", "net10.0-windows", "WDM.UI.exe")
+                ]);
 
-            // 2. Locate WDM.UI.exe across LocalAppData, host_config.json, and workspace directories
-            var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            var wdmAppData = Path.Combine(localAppData, "WDM");
-            var baseDir = AppDomain.CurrentDomain.BaseDirectory;
-
-            var candidates = new List<string>
-            {
-                Path.Combine(wdmAppData, "UI", "WDM.UI.exe"),
-                Path.Combine(wdmAppData, "WDM.UI", "WDM.UI.exe"),
-                Path.Combine(wdmAppData, "WDM.UI.exe")
-            };
-
-            // Read host_config.json if available
-            var configPath = Path.Combine(wdmAppData, "host_config.json");
-            if (File.Exists(configPath))
-            {
-                try
+                foreach (var path in candidates)
                 {
-                    using var doc = JsonDocument.Parse(File.ReadAllText(configPath));
-                    if (doc.RootElement.TryGetProperty("installedUiExePath", out var p1) && p1.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(p1.GetString()))
+                    try
                     {
-                        candidates.Add(p1.GetString()!);
-                    }
-                    if (doc.RootElement.TryGetProperty("sourceUiExePath", out var p2) && p2.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(p2.GetString()))
-                    {
-                        candidates.Add(p2.GetString()!);
-                    }
-                }
-                catch { }
-            }
-
-            candidates.AddRange([
-                Path.Combine(baseDir, "..", "WDM.UI", "WDM.UI.exe"),
-                Path.Combine(baseDir, "..", "UI", "WDM.UI.exe"),
-                Path.Combine(baseDir, "WDM.UI.exe"),
-                Path.Combine(baseDir, "..", "WDM.UI.exe"),
-                Path.Combine(baseDir, "..", "..", "bin", "WDM.UI", "WDM.UI.exe"),
-                Path.Combine(baseDir, "..", "..", "dist", "WDM-v1.0.0-windows-x64", "WDM.UI.exe"),
-                Path.Combine(baseDir, "..", "..", "src", "WDM.UI", "bin", "Release", "net10.0-windows", "win-x64", "WDM.UI.exe"),
-                Path.Combine(baseDir, "..", "..", "src", "WDM.UI", "bin", "Release", "net10.0-windows", "WDM.UI.exe"),
-                Path.Combine(baseDir, "..", "..", "src", "WDM.UI", "bin", "Debug", "net10.0-windows", "WDM.UI.exe")
-            ]);
-
-            foreach (var path in candidates)
-            {
-                try
-                {
-                    var full = Path.GetFullPath(path);
-                    if (File.Exists(full))
-                    {
-                        Program.Log($"HandleOpenApp: Starting UI process: {full}");
-                        var psi = new ProcessStartInfo
+                        var full = Path.GetFullPath(path);
+                        if (File.Exists(full))
                         {
-                            FileName = full,
-                            Arguments = !string.IsNullOrWhiteSpace(targetUrl) ? $"\"{targetUrl}\"" : string.Empty,
-                            UseShellExecute = true,
-                            WindowStyle = ProcessWindowStyle.Normal,
-                            WorkingDirectory = Path.GetDirectoryName(full)
-                        };
-                        Process.Start(psi);
-                        return (true, null);
+                            Program.Log($"EnsureUiRunning: Launching UI detached from browser Job Object: {full}");
+                            _lastUiLaunchUtc = DateTime.UtcNow;
+                            LaunchDetachedFromBrowserJob(full);
+                            return (true, null);
+                        }
+                    }
+                    catch (Exception innerEx)
+                    {
+                        Program.Log($"EnsureUiRunning candidate failed ({path}): {innerEx.Message}");
                     }
                 }
-                catch (Exception innerEx)
-                {
-                    Program.Log($"HandleOpenApp candidate failed ({path}): {innerEx.Message}");
-                }
-            }
 
-            var msg = "Failed to locate WDM.UI.exe. Please run install-host.bat to deploy WDM.";
-            Program.Log($"HandleOpenApp: {msg}");
-            return (false, msg);
+                var msg = "Failed to locate WDM.UI.exe. Please run setup.bat to deploy WDM.";
+                Program.Log($"EnsureUiRunning: {msg}");
+                return (false, msg);
+            }
         }
         catch (Exception ex)
         {
-            Program.Log($"HandleOpenApp Exception: {ex.Message}");
+            Program.Log($"EnsureUiRunning Exception: {ex.Message}");
             return (false, ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Launches WDM.UI.exe completely outside the browser's NativeMessagingHost Job Object
+    /// (which sets JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE).
+    /// 1. First attempts Win32 CreateProcessW with CREATE_BREAKAWAY_FROM_JOB | DETACHED_PROCESS (bInheritHandles = false).
+    /// 2. If the browser's Job Object blocks direct breakaway, spawns via WMI Win32_Process.Create (parented by WmiPrvSE.exe service).
+    /// This guarantees WDM.UI stays open even when Firefox, Chrome, or Edge is closed.
+    /// </summary>
+    private static void LaunchDetachedFromBrowserJob(string fullExePath)
+    {
+        var workDir = Path.GetDirectoryName(fullExePath) ?? AppDomain.CurrentDomain.BaseDirectory;
+
+        // Tier 1: Win32 CreateProcessW with CREATE_BREAKAWAY_FROM_JOB (instant, zero overhead)
+        try
+        {
+            var si = new STARTUPINFO { cb = Marshal.SizeOf<STARTUPINFO>() };
+            const uint flags = CREATE_BREAKAWAY_FROM_JOB | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS;
+            var cmdLine = $"\"{fullExePath}\"";
+
+            if (CreateProcessW(fullExePath, cmdLine, IntPtr.Zero, IntPtr.Zero, false, flags, IntPtr.Zero, workDir, ref si, out var pi))
+            {
+                if (pi.hProcess != IntPtr.Zero) CloseHandle(pi.hProcess);
+                if (pi.hThread != IntPtr.Zero) CloseHandle(pi.hThread);
+                Program.Log($"LaunchDetachedFromBrowserJob: Started via CREATE_BREAKAWAY_FROM_JOB (PID {pi.dwProcessId}).");
+                return;
+            }
+            Program.Log($"LaunchDetachedFromBrowserJob: CREATE_BREAKAWAY_FROM_JOB denied (Win32 error {Marshal.GetLastWin32Error()}), falling back to WMI service.");
+        }
+        catch (Exception ex)
+        {
+            Program.Log($"LaunchDetachedFromBrowserJob Tier 1 exception: {ex.Message}");
+        }
+
+        // Tier 2: WMI Win32_Process.Create (spawned by Windows WmiPrvSE.exe service, 100% outside browser Job Object)
+        try
+        {
+            var escapedExe = fullExePath.Replace("'", "''");
+            var escapedDir = workDir.Replace("'", "''");
+            var psCmd = $"Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{{CommandLine='\"{escapedExe}\"'; CurrentDirectory='{escapedDir}'}} | Out-Null";
+            var psi = new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = $"-NoProfile -NonInteractive -WindowStyle Hidden -Command \"{psCmd}\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = workDir
+            };
+            Process.Start(psi);
+            Program.Log("LaunchDetachedFromBrowserJob: Started via WMI Win32_Process.Create.");
+            return;
+        }
+        catch (Exception ex)
+        {
+            Program.Log($"LaunchDetachedFromBrowserJob Tier 2 exception ({ex.Message}), using explorer fallback.");
+        }
+
+        // Tier 3: Explorer fallback
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = fullExePath,
+                UseShellExecute = true,
+                WorkingDirectory = workDir
+            });
+        }
+        catch { }
+    }
+
+    private const uint CREATE_BREAKAWAY_FROM_JOB = 0x01000000;
+    private const uint CREATE_NEW_PROCESS_GROUP = 0x00000200;
+    private const uint DETACHED_PROCESS = 0x00000008;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct STARTUPINFO
+    {
+        public int cb;
+        public string? lpReserved;
+        public string? lpDesktop;
+        public string? lpTitle;
+        public int dwX;
+        public int dwY;
+        public int dwXSize;
+        public int dwYSize;
+        public int dwXCountChars;
+        public int dwYCountChars;
+        public int dwFillAttribute;
+        public int dwFlags;
+        public short wShowWindow;
+        public short cbReserved2;
+        public IntPtr lpReserved2;
+        public IntPtr hStdInput;
+        public IntPtr hStdOutput;
+        public IntPtr hStdError;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PROCESS_INFORMATION
+    {
+        public IntPtr hProcess;
+        public IntPtr hThread;
+        public int dwProcessId;
+        public int dwThreadId;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool CreateProcessW(
+        string? lpApplicationName,
+        string lpCommandLine,
+        IntPtr lpProcessAttributes,
+        IntPtr lpThreadAttributes,
+        bool bInheritHandles,
+        uint dwCreationFlags,
+        IntPtr lpEnvironment,
+        string? lpCurrentDirectory,
+        ref STARTUPINFO lpStartupInfo,
+        out PROCESS_INFORMATION lpProcessInformation);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr hObject);
+
+    private static (bool Success, string? Message) HandleOpenApp(JsonElement root)
+    {
+        var targetUrl = root.TryGetProperty("url", out var uProp) && uProp.ValueKind == JsonValueKind.String
+            ? uProp.GetString()
+            : null;
+
+        return EnsureUiRunning(targetUrl, broadcastBringToFront: true);
     }
 }

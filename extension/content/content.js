@@ -335,14 +335,31 @@
     } else if (activeHooker) {
       const menuBody = activeHooker.querySelector('.wdm-menu-body');
       if (menuBody) {
-        menuBody.innerHTML = `
-          <div style="padding: 14px 10px; text-align: center; color: #94a3b8; font-size: 11px;">
-            <span>Ready to download with WDM.</span><br>
-            ${errorMsg ? `<div style="color: #f87171; font-size: 10px; margin: 6px 0; word-break: break-all;">(${errorMsg})</div>` : ''}
-            <button class="wdm-retry-sniff-btn" style="margin-top: 8px; padding: 4px 12px; background: rgba(0,113,227,0.2); border: 1px solid rgba(0,113,227,0.5); color: #38bdf8; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 500;">↻ Retry Sniffing Formats</button>
-          </div>
-        `;
-        const retryBtn = menuBody.querySelector('.wdm-retry-sniff-btn');
+        // Build DOM safely (no innerHTML) so errorMsg can never inject markup
+        menuBody.textContent = '';
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'padding: 14px 10px; text-align: center; color: #94a3b8; font-size: 11px;';
+
+        const readyText = document.createElement('span');
+        readyText.textContent = 'Ready to download with WDM.';
+        wrap.appendChild(readyText);
+        wrap.appendChild(document.createElement('br'));
+
+        if (errorMsg) {
+          const errDiv = document.createElement('div');
+          errDiv.style.cssText = 'color: #f87171; font-size: 10px; margin: 6px 0; word-break: break-all;';
+          errDiv.textContent = `(${errorMsg})`;
+          wrap.appendChild(errDiv);
+        }
+
+        const retryBtnEl = document.createElement('button');
+        retryBtnEl.className = 'wdm-retry-sniff-btn';
+        retryBtnEl.style.cssText = 'margin-top: 8px; padding: 4px 12px; background: rgba(0,113,227,0.2); border: 1px solid rgba(0,113,227,0.5); color: #38bdf8; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 500;';
+        retryBtnEl.textContent = '\u21BB Retry Sniffing Formats';
+        wrap.appendChild(retryBtnEl);
+
+        menuBody.appendChild(wrap);
+        const retryBtn = retryBtnEl;
         if (retryBtn) {
           retryBtn.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -416,13 +433,26 @@
     const tagText = f.isAudioOnly ? 'AUDIO' : (f.extension ? f.extension.toUpperCase() : 'VIDEO');
     const sizeText = f.fileSizeBytes ? formatBytes(f.fileSizeBytes) : (f.note || '');
 
-    item.innerHTML = `
-      <div class="wdm-stream-left">
-        <span class="wdm-stream-tag ${tagClass}">${tagText}</span>
-        <span class="wdm-stream-res">${f.resolution}</span>
-      </div>
-      <span class="wdm-stream-size">${sizeText}</span>
-    `;
+    const left = document.createElement('div');
+    left.className = 'wdm-stream-left';
+
+    const tag = document.createElement('span');
+    tag.className = `wdm-stream-tag ${tagClass}`;
+    tag.textContent = tagText;
+
+    const res = document.createElement('span');
+    res.className = 'wdm-stream-res';
+    res.textContent = f.resolution || '';
+
+    left.appendChild(tag);
+    left.appendChild(res);
+
+    const size = document.createElement('span');
+    size.className = 'wdm-stream-size';
+    size.textContent = sizeText;
+
+    item.appendChild(left);
+    item.appendChild(size);
 
     item.addEventListener('click', (e) => {
       e.stopPropagation();

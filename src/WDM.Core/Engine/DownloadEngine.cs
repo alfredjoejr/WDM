@@ -211,6 +211,26 @@ public sealed class DownloadEngine : IDownloadEngine, IDisposable
 
                 response.EnsureSuccessStatusCode();
 
+                // Guard against servers that advertise Accept-Ranges: bytes on HEAD,
+                // but ignore the Range header on GET and return 200 OK from byte 0.
+                if (request.Headers.Range != null && response.StatusCode != HttpStatusCode.PartialContent)
+                {
+                    if (chunk.StartOffset > 0)
+                    {
+                        // Secondary worker: abort so we never write byte 0 into the middle of the file
+                        chunk.BytesDownloaded = chunk.TotalBytes;
+                        chunk.Status = ChunkStatus.Completed;
+                        return;
+                    }
+                    else
+                    {
+                        // Primary worker (offset 0): expand to cover the entire file in a single stream
+                        chunk.EndOffset = (_metadata.TotalBytes.HasValue && _metadata.TotalBytes.Value > 0)
+                            ? _metadata.TotalBytes.Value - 1
+                            : long.MaxValue;
+                    }
+                }
+
                 await using var stream = await response.Content.ReadAsStreamAsync(ct);
                 var bufferSize = Math.Min(options.BufferSizeBytes, 128 * 1024);
                 byte[] rentedBuffer = ArrayPool<byte>.Shared.Rent(bufferSize);
@@ -222,7 +242,16 @@ public sealed class DownloadEngine : IDownloadEngine, IDisposable
                         int bytesToRead = (int)Math.Min(rentedBuffer.Length, chunk.RemainingBytes);
                         int bytesRead = await stream.ReadAsync(rentedBuffer.AsMemory(0, bytesToRead), ct);
 
-                        if (bytesRead == 0) break; // EOF
+                        if (bytesRead == 0)
+                        {
+                            // For streams without Content-Length (chunk.IsUnknownLength), reaching EOF means the file is 100% downloaded
+                            if (chunk.IsUnknownLength || !_metadata.TotalBytes.HasValue)
+                            {
+                                chunk.Status = ChunkStatus.Completed;
+                                return;
+                            }
+                            break; // EOF on known-length stream
+                        }
 
                         // Zero-stitch direct write into final file at target offset
                         await _diskManager!.WriteAtAsync(
@@ -367,13 +396,14 @@ public sealed class DownloadEngine : IDownloadEngine, IDisposable
     private static List<DownloadChunk> PlanChunks(long? totalBytes, int connectionCount)
     {
         var list = new List<DownloadChunk>();
-        if (!totalBytes.HasValue || totalBytes.Value <= 0 || connectionCount <= 1)
+        // Use a single stream if size is unknown or smaller than 64 KB (e.g. .torrent files)
+        if (!totalBytes.HasValue || totalBytes.Value <= 65536 || connectionCount <= 1)
         {
             list.Add(new DownloadChunk
             {
                 Index = 0,
                 StartOffset = 0,
-                EndOffset = totalBytes.HasValue ? totalBytes.Value - 1 : long.MaxValue,
+                EndOffset = totalBytes.HasValue && totalBytes.Value > 0 ? totalBytes.Value - 1 : long.MaxValue,
                 BytesDownloaded = 0
             });
             return list;

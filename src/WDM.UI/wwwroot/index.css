@@ -221,6 +221,12 @@ body {
   color: #38a5ff;
 }
 
+.nav-badge.green {
+  background: rgba(48, 209, 88, 0.16);
+  color: #30d158;
+  border: 1px solid rgba(48, 209, 88, 0.3);
+}
+
 /* Sidebar Bottom Activity Card */
 .sidebar-system-card {
   padding: 14px 16px;

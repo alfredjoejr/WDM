@@ -10,6 +10,7 @@ using WDM.Core.Media;
 using WDM.Core.Models;
 using WDM.Core.Network;
 using WDM.Core.Security;
+using WDM.Core.Updater;
 
 namespace WDM.UI;
 
@@ -17,8 +18,10 @@ public partial class MainWindow : Window
 {
     private readonly HttpProbe _probe = new();
     private readonly MediaExtractor _mediaExtractor = new();
+    private readonly UpdateManager _updateManager = new();
     private readonly ConcurrentDictionary<string, DownloadEngine> _activeEngines = new();
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _activeMediaDownloads = new();
+    private readonly HashSet<string> _processedIpcDownloadIds = new();
     private readonly string _historyFilePath;
     private readonly string _ipcEventsFilePath;
     private long _ipcLastPosition;
@@ -231,6 +234,28 @@ public partial class MainWindow : Window
                                 PostToWeb(new { action = "switch_tab", tab = "downloads" });
                             }
                         }
+                        else if (action == "ipc_start_download")
+                        {
+                            var dlId = root.TryGetProperty("downloadId", out var idProp) ? idProp.GetString() : null;
+                            if (!string.IsNullOrWhiteSpace(dlId) && !_processedIpcDownloadIds.Add(dlId))
+                            {
+                                continue;
+                            }
+                            BringToFront();
+                            var cloned = root.Clone();
+                            _ = HandleStartDownloadAsync(cloned, null);
+                        }
+                        else if (action == "ipc_download_media")
+                        {
+                            var dlId = root.TryGetProperty("downloadId", out var idProp) ? idProp.GetString() : null;
+                            if (!string.IsNullOrWhiteSpace(dlId) && !_processedIpcDownloadIds.Add(dlId))
+                            {
+                                continue;
+                            }
+                            BringToFront();
+                            var cloned = root.Clone();
+                            _ = HandleDownloadMediaAsync(cloned, null);
+                        }
                         else if (action == "cancel_download" || action == "pause_download")
                         {
                             var cancelId = root.TryGetProperty("downloadId", out var idProp) ? idProp.GetString() : null;
@@ -356,6 +381,18 @@ public partial class MainWindow : Window
                 case "save_history":
                     await HandleSaveHistoryAsync(root);
                     break;
+
+                case "check_updates":
+                    await HandleCheckUpdatesAsync(requestId);
+                    break;
+
+                case "apply_github_update":
+                    await HandleApplyGitHubUpdateAsync(root, requestId);
+                    break;
+
+                case "sync_local_repo":
+                    await HandleSyncLocalRepoAsync(root, requestId);
+                    break;
             }
         }
         catch (Exception ex)
@@ -400,6 +437,29 @@ public partial class MainWindow : Window
         var connections = root.TryGetProperty("connections", out var cProp) ? cProp.GetInt32() : 16;
         var outDir = root.TryGetProperty("destinationDirectory", out var dProp) ? dProp.GetString() : null;
         var speedLimit = root.TryGetProperty("speedLimit", out var lProp) && lProp.GetInt64() > 0 ? lProp.GetInt64() : (long?)null;
+
+        // If browser passed a full path in fileName (e.g. Firefox's downloads.onCreated), split directory & filename cleanly
+        if (!string.IsNullOrWhiteSpace(fileName) && (fileName.Contains('\\') || fileName.Contains('/')))
+        {
+            if (string.IsNullOrWhiteSpace(outDir))
+            {
+                outDir = Path.GetDirectoryName(fileName);
+            }
+            fileName = Path.GetFileName(fileName);
+        }
+
+        Dictionary<string, string>? headers = null;
+        if (root.TryGetProperty("headers", out var hProp) && hProp.ValueKind == JsonValueKind.Object)
+        {
+            headers = new();
+            foreach (var prop in hProp.EnumerateObject())
+            {
+                if (prop.Value.ValueKind == JsonValueKind.String)
+                {
+                    headers[prop.Name] = prop.Value.GetString() ?? string.Empty;
+                }
+            }
+        }
 
         var downloadId = (root.TryGetProperty("downloadId", out var idProp) ? idProp.GetString() : null) ?? Guid.NewGuid().ToString("N");
         var engine = new DownloadEngine();
@@ -450,7 +510,8 @@ public partial class MainWindow : Window
                     CustomFileName = fileName,
                     DestinationDirectory = outDir,
                     Connections = connections,
-                    MaxBytesPerSecond = speedLimit
+                    MaxBytesPerSecond = speedLimit,
+                    CustomHeaders = headers
                 };
 
                 var savedPath = await engine.StartAsync(options);
@@ -862,6 +923,76 @@ public partial class MainWindow : Window
         {
             await File.WriteAllTextAsync(_historyFilePath, histProp.GetString() ?? "[]");
         }
+    }
+
+    private async Task HandleCheckUpdatesAsync(string? requestId)
+    {
+        var result = await _updateManager.CheckForUpdatesAsync();
+        PostToWeb(new
+        {
+            requestId,
+            action = "update_check_result",
+            currentVersion = result.CurrentVersion,
+            latestVersion = result.LatestVersion,
+            isUpdateAvailable = result.IsUpdateAvailable,
+            releaseTitle = result.ReleaseTitle,
+            releaseNotes = result.ReleaseNotes,
+            downloadUrl = result.DownloadUrl,
+            releasePageUrl = result.ReleasePageUrl,
+            publishedAt = result.PublishedAt,
+            hasLocalRepo = result.HasLocalRepo,
+            localRepoPath = result.LocalRepoPath,
+            hasLocalChanges = result.HasLocalChanges,
+            localLastModifiedText = result.LocalLastModifiedText,
+            checkError = result.CheckError
+        });
+    }
+
+    private async Task HandleApplyGitHubUpdateAsync(JsonElement root, string? requestId)
+    {
+        var downloadUrl = root.TryGetProperty("downloadUrl", out var dProp) ? dProp.GetString() : null;
+        if (string.IsNullOrWhiteSpace(downloadUrl))
+        {
+            PostToWeb(new { requestId, action = "update_apply_result", success = false, message = "No release ZIP download URL found." });
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            var (ok, msg) = await _updateManager.DownloadAndApplyGitHubUpdateAsync(
+                downloadUrl,
+                (pct, statusText) => PostToWeb(new { action = "update_progress", percentage = pct, status = statusText }));
+
+            PostToWeb(new { requestId, action = "update_apply_result", success = ok, message = msg });
+            if (ok)
+            {
+                await Task.Delay(600);
+                Dispatcher.Invoke(() => Application.Current.Shutdown());
+            }
+        });
+
+        await Task.CompletedTask;
+    }
+
+    private async Task HandleSyncLocalRepoAsync(JsonElement root, string? requestId)
+    {
+        var repoPath = root.TryGetProperty("repoPath", out var rProp) ? rProp.GetString() : null;
+
+        _ = Task.Run(async () =>
+        {
+            var (ok, msg) = await _updateManager.BuildAndHotSyncFromLocalRepoAsync(
+                repoPath,
+                (pct, statusText) => PostToWeb(new { action = "update_progress", percentage = pct, status = statusText }));
+
+            PostToWeb(new { requestId, action = "update_apply_result", success = ok, message = msg });
+            if (ok)
+            {
+                await Task.Delay(600);
+                Dispatcher.Invoke(() => Application.Current.Shutdown());
+            }
+        });
+
+        await Task.CompletedTask;
     }
 
     private void PostToWeb(object message)

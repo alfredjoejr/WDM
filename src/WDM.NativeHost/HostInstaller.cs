@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -94,19 +95,80 @@ public static class HostInstaller
             }
         }
 
-        // 3. Locate extension folder and save host_config.json
+        // 3. Locate extension folder, deploy permanently to LocalAppData\WDM\Extension, and package .xpi / .zip
         var extensionDir = FindExtensionDirectory(sourceDir);
+        var targetExtensionDir = Path.Combine(appData, "Extension");
+        string? targetXpiPath = null;
+        string? targetAmoZipPath = null;
+
+        if (!string.IsNullOrWhiteSpace(extensionDir) && Directory.Exists(extensionDir))
+        {
+            try
+            {
+                Directory.CreateDirectory(targetExtensionDir);
+                CopyDirectoryRecursive(extensionDir, targetExtensionDir);
+                Console.WriteLine($"[✓] Extension files deployed permanently to: {targetExtensionDir}");
+
+                targetXpiPath = Path.Combine(targetExtensionDir, "wdm-downloader@local.xpi");
+                targetAmoZipPath = Path.Combine(targetExtensionDir, "wdm-downloader-amo.zip");
+
+                PackageExtension(targetExtensionDir, targetXpiPath);
+                PackageExtension(targetExtensionDir, targetAmoZipPath);
+                Console.WriteLine($"[✓] Firefox XPI package created: {targetXpiPath}");
+                Console.WriteLine($"[✓] AMO distribution package created: {targetAmoZipPath}");
+
+                // Prefer a Mozilla-signed XPI if the user saved one (kept outside Extension\ so re-installs never overwrite it)
+                var signedXpiPath = Path.Combine(appData, "Signed", "wdm-downloader-signed.xpi");
+                if (File.Exists(signedXpiPath))
+                {
+                    Console.WriteLine($"[✓] Using Mozilla-signed XPI for Firefox: {signedXpiPath}");
+                    TryInstallFirefoxDistribution(signedXpiPath);
+                }
+                else
+                {
+                    TryInstallFirefoxDistribution(targetXpiPath);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Notice] Extension packaging notice: {ex.Message}");
+            }
+        }
+
+        // 4. Locate and deploy icon.ico
+        var sourceIcon = FindSourceIcon(sourceDir);
+        var targetIcon = Path.Combine(appData, "icon.ico");
+        if (!string.IsNullOrWhiteSpace(sourceIcon) && File.Exists(sourceIcon))
+        {
+            try
+            {
+                File.Copy(sourceIcon, targetIcon, overwrite: true);
+            }
+            catch { }
+        }
+
+        // 5. Create Desktop and Start Menu Shortcuts
+        if (File.Exists(targetUiExe))
+        {
+            CreateShortcuts(targetUiExe, File.Exists(targetIcon) ? targetIcon : targetUiExe);
+        }
+
+        // 6. Register in Windows Programs & Features (Uninstall support)
+        RegisterInWindowsProgramsAndFeatures(appData, targetExePath, targetUiExe, targetIcon);
+
         var config = new
         {
             installedUiExePath = File.Exists(targetUiExe) ? targetUiExe : null,
             sourceUiExePath = sourceUiExe,
-            extensionDir = extensionDir,
+            extensionDir = Directory.Exists(targetExtensionDir) ? targetExtensionDir : extensionDir,
+            sourceExtensionDir = extensionDir,
+            xpiPath = targetXpiPath,
             updatedAt = DateTime.UtcNow.ToString("O")
         };
         File.WriteAllText(GetConfigPath(), JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true }));
 
-        // 4. Discover all valid Chromium extension origins (exact 32-char IDs; Chromium forbids wildcards)
-        var allowedOrigins = DiscoverChromiumAllowedOrigins(extensionDir);
+        // 7. Discover all valid Chromium extension origins (exact 32-char IDs; Chromium forbids wildcards)
+        var allowedOrigins = DiscoverChromiumAllowedOrigins(Directory.Exists(targetExtensionDir) ? targetExtensionDir : extensionDir);
         var allowedFirefoxExtensions = DiscoverFirefoxAllowedExtensions();
         var chromiumManifestPath = GetChromiumManifestPath();
         var firefoxManifestPath = GetFirefoxManifestPath();
@@ -152,7 +214,17 @@ public static class HostInstaller
             catch { }
         }
 
-        // 5. Register in Windows Registry (HKCU)
+        if (Directory.Exists(targetExtensionDir))
+        {
+            try
+            {
+                File.WriteAllText(Path.Combine(targetExtensionDir, $"{HostName}.json"), chromiumJson);
+                File.WriteAllText(Path.Combine(targetExtensionDir, $"{HostName}.firefox.json"), firefoxJson);
+            }
+            catch { }
+        }
+
+        // 8. Register in Windows Registry (HKCU)
         bool allSucceeded = true;
         foreach (var (browser, subKey, isFirefox) in RegistryTargets)
         {
@@ -211,6 +283,26 @@ public static class HostInstaller
             }
         }
 
+        // Remove shortcuts
+        try
+        {
+            var desktopShortcut = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "WDM.lnk");
+            var startMenuShortcut = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs", "WDM.lnk");
+            if (File.Exists(desktopShortcut)) File.Delete(desktopShortcut);
+            if (File.Exists(startMenuShortcut)) File.Delete(startMenuShortcut);
+            Console.WriteLine("[✓] Removed Desktop and Start Menu shortcuts");
+        }
+        catch { }
+
+        // Remove Uninstall registry entry
+        try
+        {
+            using var uninstParent = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall", writable: true);
+            uninstParent?.DeleteSubKeyTree("WDM", throwOnMissingSubKey: false);
+            Console.WriteLine("[✓] Removed WDM from Windows Installed Apps");
+        }
+        catch { }
+
         return allSucceeded;
     }
 
@@ -244,12 +336,37 @@ public static class HostInstaller
 
     private static string? FindExtensionDirectory(string hostDir)
     {
-        var candidates = new[]
+        // 1. Check host_config.json if previously saved
+        var configPath = GetConfigPath();
+        if (File.Exists(configPath))
         {
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(configPath));
+                if (doc.RootElement.TryGetProperty("sourceExtensionDir", out var sProp) && sProp.ValueKind == JsonValueKind.String)
+                {
+                    var sPath = sProp.GetString();
+                    if (!string.IsNullOrWhiteSpace(sPath) && Directory.Exists(sPath) && File.Exists(Path.Combine(sPath, "manifest.json")))
+                    {
+                        return sPath;
+                    }
+                }
+            }
+            catch { }
+        }
+
+        var candidates = new List<string>
+        {
+            Path.Combine(Directory.GetCurrentDirectory(), "extension"),
+            Path.Combine(AppContext.BaseDirectory, "extension"),
             Path.Combine(hostDir, "..", "..", "extension"),
             Path.Combine(hostDir, "..", "extension"),
             Path.Combine(hostDir, "extension")
         };
+
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        candidates.Add(Path.Combine(userProfile, "OneDrive", "Documents", "Github", "WDM", "extension"));
+        candidates.Add(Path.Combine(userProfile, "Documents", "Github", "WDM", "extension"));
 
         foreach (var candidate in candidates)
         {
@@ -512,6 +629,189 @@ public static class HostInstaller
         {
             var destSubDir = Path.Combine(targetDir, Path.GetFileName(subDir));
             CopyDirectoryRecursive(subDir, destSubDir);
+        }
+    }
+
+    public static void PackageExtension(string sourceExtensionDir, string outputZipPath)
+    {
+        try
+        {
+            if (File.Exists(outputZipPath)) File.Delete(outputZipPath);
+
+            using var zipStream = new FileStream(outputZipPath, FileMode.Create, FileAccess.Write);
+            using var archive = new ZipArchive(zipStream, ZipArchiveMode.Create);
+
+            foreach (var filePath in Directory.EnumerateFiles(sourceExtensionDir, "*", SearchOption.AllDirectories))
+            {
+                var fileName = Path.GetFileName(filePath);
+                if (fileName.EndsWith(".xpi", StringComparison.OrdinalIgnoreCase) ||
+                    fileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ||
+                    fileName.EndsWith(".crx", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var relativePath = Path.GetRelativePath(sourceExtensionDir, filePath).Replace('\\', '/');
+                archive.CreateEntryFromFile(filePath, relativePath, CompressionLevel.Optimal);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Notice] Could not package {Path.GetFileName(outputZipPath)}: {ex.Message}");
+        }
+    }
+
+    private static void TryInstallFirefoxDistribution(string xpiPath)
+    {
+        try
+        {
+            var firefoxDirs = new[]
+            {
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Mozilla Firefox"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Mozilla Firefox")
+            };
+
+            foreach (var ffDir in firefoxDirs)
+            {
+                if (!Directory.Exists(ffDir)) continue;
+
+                var distDir = Path.Combine(ffDir, "distribution");
+                var extDir = Path.Combine(distDir, "extensions");
+
+                // Try copying .xpi directly into distribution\extensions\
+                try
+                {
+                    Directory.CreateDirectory(extDir);
+                    var targetFfXpi = Path.Combine(extDir, "wdm-downloader@local.xpi");
+                    File.Copy(xpiPath, targetFfXpi, overwrite: true);
+                    Console.WriteLine($"[✓] Deployed extension into Firefox distribution: {targetFfXpi}");
+                }
+                catch { }
+
+                // Try creating/merging policies.json in distribution\
+                try
+                {
+                    Directory.CreateDirectory(distDir);
+                    var policiesFile = Path.Combine(distDir, "policies.json");
+                    var uriPath = "file:///" + xpiPath.Replace('\\', '/');
+
+                    var policiesObj = new
+                    {
+                        policies = new
+                        {
+                            ExtensionSettings = new Dictionary<string, object>
+                            {
+                                ["wdm-downloader@local"] = new
+                                {
+                                    installation_mode = "normal_installed",
+                                    install_url = uriPath
+                                }
+                            }
+                        }
+                    };
+
+                    File.WriteAllText(policiesFile, JsonSerializer.Serialize(policiesObj, new JsonSerializerOptions { WriteIndented = true }));
+                    Console.WriteLine($"[✓] Deployed Firefox policies.json into: {policiesFile}");
+                }
+                catch { }
+            }
+        }
+        catch { }
+    }
+
+    private static string? FindSourceIcon(string hostDir)
+    {
+        var candidates = new[]
+        {
+            Path.Combine(hostDir, "icon.ico"),
+            Path.Combine(hostDir, "..", "assets", "icon.ico"),
+            Path.Combine(hostDir, "..", "..", "assets", "icon.ico"),
+            Path.Combine(hostDir, "..", "icon.ico"),
+            Path.Combine(hostDir, "..", "..", "src", "WDM.UI", "assets", "icon.ico")
+        };
+
+        foreach (var c in candidates)
+        {
+            try
+            {
+                var full = Path.GetFullPath(c);
+                if (File.Exists(full)) return full;
+            }
+            catch { }
+        }
+        return null;
+    }
+
+    private static void CreateShortcuts(string targetExePath, string iconPath)
+    {
+        try
+        {
+            var desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            var startMenuDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs");
+
+            var desktopShortcut = Path.Combine(desktopDir, "WDM.lnk");
+            var startMenuShortcut = Path.Combine(startMenuDir, "WDM.lnk");
+
+            CreateShortcutInternal(desktopShortcut, targetExePath, iconPath, "WDM - Windows Download Manager");
+            CreateShortcutInternal(startMenuShortcut, targetExePath, iconPath, "WDM - Windows Download Manager");
+
+            Console.WriteLine($"[✓] Created Desktop shortcut: {desktopShortcut}");
+            Console.WriteLine($"[✓] Created Start Menu shortcut: {startMenuShortcut}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Notice] Could not create shortcuts: {ex.Message}");
+        }
+    }
+
+    private static void CreateShortcutInternal(string shortcutPath, string targetExePath, string iconPath, string description)
+    {
+        try
+        {
+            var shellType = Type.GetTypeFromProgID("WScript.Shell");
+            if (shellType == null) return;
+
+            dynamic shell = Activator.CreateInstance(shellType)!;
+            dynamic shortcut = shell.CreateShortcut(shortcutPath);
+            shortcut.TargetPath = targetExePath;
+            shortcut.WorkingDirectory = Path.GetDirectoryName(targetExePath);
+            shortcut.Description = description;
+            if (File.Exists(iconPath))
+            {
+                shortcut.IconLocation = $"{iconPath},0";
+            }
+            shortcut.Save();
+        }
+        catch { }
+    }
+
+    private static void RegisterInWindowsProgramsAndFeatures(string appData, string nativeHostExe, string uiExe, string iconPath)
+    {
+        try
+        {
+            const string uninstallKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\WDM";
+            using var key = Registry.CurrentUser.CreateSubKey(uninstallKeyPath);
+            if (key == null) return;
+
+            key.SetValue("DisplayName", "WDM - Windows Download Manager", RegistryValueKind.String);
+            key.SetValue("DisplayVersion", "1.0.0", RegistryValueKind.String);
+            key.SetValue("Publisher", "WDM Project", RegistryValueKind.String);
+            key.SetValue("InstallLocation", appData, RegistryValueKind.String);
+            key.SetValue("UninstallString", $"\"{nativeHostExe}\" --uninstall", RegistryValueKind.String);
+            key.SetValue("QuietUninstallString", $"\"{nativeHostExe}\" --uninstall", RegistryValueKind.String);
+            if (File.Exists(iconPath)) key.SetValue("DisplayIcon", iconPath, RegistryValueKind.String);
+            else if (File.Exists(uiExe)) key.SetValue("DisplayIcon", uiExe, RegistryValueKind.String);
+            key.SetValue("HelpLink", "https://github.com/alfredjoejr/WDM", RegistryValueKind.String);
+            key.SetValue("URLInfoAbout", "https://github.com/alfredjoejr/WDM", RegistryValueKind.String);
+            key.SetValue("NoModify", 1, RegistryValueKind.DWord);
+            key.SetValue("NoRepair", 1, RegistryValueKind.DWord);
+            key.SetValue("EstimatedSize", 85000, RegistryValueKind.DWord);
+
+            Console.WriteLine("[✓] Registered WDM in Windows Installed Apps (Programs and Features)");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Notice] Could not register in Windows Programs and Features: {ex.Message}");
         }
     }
 }

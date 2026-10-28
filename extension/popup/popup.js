@@ -143,19 +143,41 @@ document.addEventListener('DOMContentLoaded', async () => {
       card.className = 'download-item-card';
       const percent = Math.round(item.percentage || 0);
 
-      card.innerHTML = `
-        <div class="info-row">
-          <span class="file-name" title="${item.url}">${item.url.split('/').pop().split('?')[0] || 'file'}</span>
-          <span class="speed-pill">${item.speed || '0 B/s'}</span>
-        </div>
-        <div class="progress-track">
-          <div class="progress-fill" style="width: ${percent}%;"></div>
-        </div>
-        <div class="info-row" style="font-size: 10px; color: #94a3b8;">
-          <span>${item.downloaded || '0 B'} / ${item.total || 'Unknown'}</span>
-          <span>${percent}%</span>
-        </div>
-      `;
+      // Build DOM safely (no innerHTML) — URLs/filenames are untrusted
+      const url = item.url || '';
+
+      const row1 = document.createElement('div');
+      row1.className = 'info-row';
+      const fileName = document.createElement('span');
+      fileName.className = 'file-name';
+      fileName.title = url;
+      fileName.textContent = url.split('/').pop().split('?')[0] || 'file';
+      const speed = document.createElement('span');
+      speed.className = 'speed-pill';
+      speed.textContent = item.speed || '0 B/s';
+      row1.appendChild(fileName);
+      row1.appendChild(speed);
+
+      const track = document.createElement('div');
+      track.className = 'progress-track';
+      const fill = document.createElement('div');
+      fill.className = 'progress-fill';
+      fill.style.width = `${percent}%`;
+      track.appendChild(fill);
+
+      const row2 = document.createElement('div');
+      row2.className = 'info-row';
+      row2.style.cssText = 'font-size: 10px; color: #94a3b8;';
+      const sizes = document.createElement('span');
+      sizes.textContent = `${item.downloaded || '0 B'} / ${item.total || 'Unknown'}`;
+      const pct = document.createElement('span');
+      pct.textContent = `${percent}%`;
+      row2.appendChild(sizes);
+      row2.appendChild(pct);
+
+      card.appendChild(row1);
+      card.appendChild(track);
+      card.appendChild(row2);
 
       downloadsList.appendChild(card);
     });
