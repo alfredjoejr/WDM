@@ -794,7 +794,7 @@ public static class HostInstaller
             if (key == null) return;
 
             key.SetValue("DisplayName", "WDM - Windows Download Manager", RegistryValueKind.String);
-            key.SetValue("DisplayVersion", "1.0.0", RegistryValueKind.String);
+            key.SetValue("DisplayVersion", "1.1.0", RegistryValueKind.String);
             key.SetValue("Publisher", "WDM Project", RegistryValueKind.String);
             key.SetValue("InstallLocation", appData, RegistryValueKind.String);
             key.SetValue("UninstallString", $"\"{nativeHostExe}\" --uninstall", RegistryValueKind.String);

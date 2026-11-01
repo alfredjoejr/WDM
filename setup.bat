@@ -3,7 +3,7 @@ setlocal enabledelayedexpansion
 title WDM - Windows Download Manager Setup
 
 echo ===================================================================
-echo        WDM (Windows Download Manager) v1.0.0 Setup Wizard
+echo        WDM (Windows Download Manager) v1.1.0 Setup Wizard
 echo ===================================================================
 echo.
 echo Installing WDM and registering browser extensions for:

@@ -14,4 +14,6 @@ public sealed class DownloadOptions
     public bool PreferHttp3 { get; init; } = true;
     public bool OverwriteExisting { get; init; } = false;
     public int BufferSizeBytes { get; init; } = 64 * 1024; // 64 KB buffer
+    public string? ExpectedHash { get; init; }
+    public string? HashAlgorithm { get; init; }
 }

@@ -98,6 +98,53 @@ public sealed class HttpProbe
             acceptsRanges = true;
         }
 
+        // Extract server-provided checksums if present (e.g. Content-MD5, x-amz-meta-digest, digest headers)
+        string? serverMd5 = null;
+        string? serverSha256 = null;
+
+        if (response.Content.Headers.ContentMD5 != null)
+        {
+            serverMd5 = Convert.ToHexString(response.Content.Headers.ContentMD5).ToLowerInvariant();
+        }
+
+        if (response.Headers.TryGetValues("ETag", out var etagValues))
+        {
+            var rawEtag = etagValues.FirstOrDefault()?.Trim('"', ' ', 'W', '/', '\\');
+            if (!string.IsNullOrWhiteSpace(rawEtag) && rawEtag.Length == 32 && rawEtag.All(Uri.IsHexDigit))
+            {
+                serverMd5 ??= rawEtag.ToLowerInvariant();
+            }
+        }
+
+        if (response.Headers.TryGetValues("Digest", out var digestValues))
+        {
+            foreach (var d in digestValues)
+            {
+                var parts = d.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                foreach (var part in parts)
+                {
+                    if (part.StartsWith("sha-256=", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var b64 = part["sha-256=".Length..].Trim();
+                        try
+                        {
+                            serverSha256 = Convert.ToHexString(Convert.FromBase64String(b64)).ToLowerInvariant();
+                        }
+                        catch { }
+                    }
+                    else if (part.StartsWith("md5=", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var b64 = part["md5=".Length..].Trim();
+                        try
+                        {
+                            serverMd5 ??= Convert.ToHexString(Convert.FromBase64String(b64)).ToLowerInvariant();
+                        }
+                        catch { }
+                    }
+                }
+            }
+        }
+
         // Extract filename
         var fileName = ResolveFileName(response, finalUrl);
 
@@ -111,7 +158,9 @@ public sealed class HttpProbe
             ETag = response.Headers.ETag?.Tag,
             LastModified = response.Content.Headers.LastModified,
             ContentType = response.Content.Headers.ContentType?.MediaType,
-            HttpVersion = response.Version
+            HttpVersion = response.Version,
+            ServerMd5 = serverMd5,
+            ServerSha256 = serverSha256
         };
     }
 

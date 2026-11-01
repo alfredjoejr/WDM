@@ -382,6 +382,14 @@ public partial class MainWindow : Window
                     await HandleSaveHistoryAsync(root);
                     break;
 
+                case "compute_hashes":
+                    await HandleComputeHashesAsync(root, requestId);
+                    break;
+
+                case "verify_checksum":
+                    await HandleVerifyChecksumAsync(root, requestId);
+                    break;
+
                 case "check_updates":
                     await HandleCheckUpdatesAsync(requestId);
                     break;
@@ -420,7 +428,9 @@ public partial class MainWindow : Window
                     contentType = meta.ContentType,
                     etag = meta.ETag,
                     httpVersion = meta.HttpVersion?.ToString(),
-                    finalUrl = meta.FinalUrl
+                    finalUrl = meta.FinalUrl,
+                    serverMd5 = meta.ServerMd5,
+                    serverSha256 = meta.ServerSha256
                 }
             });
         }
@@ -437,6 +447,8 @@ public partial class MainWindow : Window
         var connections = root.TryGetProperty("connections", out var cProp) ? cProp.GetInt32() : 16;
         var outDir = root.TryGetProperty("destinationDirectory", out var dProp) ? dProp.GetString() : null;
         var speedLimit = root.TryGetProperty("speedLimit", out var lProp) && lProp.GetInt64() > 0 ? lProp.GetInt64() : (long?)null;
+        var expectedHash = root.TryGetProperty("expectedHash", out var ehProp) ? ehProp.GetString()?.Trim() : null;
+        var hashAlgorithm = root.TryGetProperty("hashAlgorithm", out var haProp) ? haProp.GetString()?.Trim() : null;
 
         // If browser passed a full path in fileName (e.g. Firefox's downloads.onCreated), split directory & filename cleanly
         if (!string.IsNullOrWhiteSpace(fileName) && (fileName.Contains('\\') || fileName.Contains('/')))
@@ -511,18 +523,69 @@ public partial class MainWindow : Window
                     DestinationDirectory = outDir,
                     Connections = connections,
                     MaxBytesPerSecond = speedLimit,
-                    CustomHeaders = headers
+                    CustomHeaders = headers,
+                    ExpectedHash = expectedHash,
+                    HashAlgorithm = hashAlgorithm
                 };
 
                 var savedPath = await engine.StartAsync(options);
-                var sha256 = await ChecksumVerifier.ComputeHashAsync(savedPath);
+                var allHashes = await ChecksumVerifier.ComputeAllHashesAsync(savedPath);
+                var sha256 = allHashes[HashAlgorithmType.Sha256];
+                var md5 = allHashes[HashAlgorithmType.Md5];
+                var sha1 = allHashes[HashAlgorithmType.Sha1];
+
+                bool? hashMatched = null;
+                string? hashMatchError = null;
+
+                // Priority 1: User-specified expected hash
+                if (!string.IsNullOrWhiteSpace(expectedHash))
+                {
+                    var algo = !string.IsNullOrWhiteSpace(hashAlgorithm)
+                        ? ChecksumVerifier.ParseAlgorithm(hashAlgorithm)
+                        : ChecksumVerifier.InferAlgorithmFromHash(expectedHash);
+
+                    var actualForAlgo = algo switch
+                    {
+                        HashAlgorithmType.Md5 => md5,
+                        HashAlgorithmType.Sha1 => sha1,
+                        _ => sha256
+                    };
+
+                    hashMatched = string.Equals(actualForAlgo, expectedHash, StringComparison.OrdinalIgnoreCase);
+                    if (hashMatched == false)
+                    {
+                        hashMatchError = $"Checksum mismatch! Expected {algo}: {expectedHash}, got {actualForAlgo}. File may be corrupted or modified.";
+                    }
+                }
+                // Priority 2: Server-provided SHA-256 header (e.g. Digest: sha-256=...)
+                else if (!string.IsNullOrWhiteSpace(engine.Metadata?.ServerSha256))
+                {
+                    hashMatched = string.Equals(sha256, engine.Metadata.ServerSha256, StringComparison.OrdinalIgnoreCase);
+                    if (hashMatched == false)
+                    {
+                        hashMatchError = $"Server SHA-256 mismatch! Server advertised {engine.Metadata.ServerSha256}, got {sha256}.";
+                    }
+                }
+                // Priority 3: Server-provided Content-MD5 or ETag MD5
+                else if (!string.IsNullOrWhiteSpace(engine.Metadata?.ServerMd5))
+                {
+                    hashMatched = string.Equals(md5, engine.Metadata.ServerMd5, StringComparison.OrdinalIgnoreCase);
+                    if (hashMatched == false)
+                    {
+                        hashMatchError = $"Server MD5 mismatch! Server advertised {engine.Metadata.ServerMd5}, got {md5}.";
+                    }
+                }
 
                 PostToWeb(new
                 {
                     action = "download_completed",
                     downloadId,
                     filePath = savedPath,
-                    sha256
+                    sha256,
+                    md5,
+                    sha1,
+                    hashMatched,
+                    hashMatchError
                 });
             }
             catch (Exception ex)
@@ -993,6 +1056,80 @@ public partial class MainWindow : Window
         });
 
         await Task.CompletedTask;
+    }
+
+    private async Task HandleComputeHashesAsync(JsonElement root, string? requestId)
+    {
+        var filePath = root.TryGetProperty("filePath", out var pProp) ? pProp.GetString() : null;
+        if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+        {
+            PostToWeb(new { requestId, action = "compute_hashes_result", success = false, message = "File does not exist on disk." });
+            return;
+        }
+
+        try
+        {
+            var hashes = await ChecksumVerifier.ComputeAllHashesAsync(filePath);
+            PostToWeb(new
+            {
+                requestId,
+                action = "compute_hashes_result",
+                success = true,
+                filePath,
+                sha256 = hashes[HashAlgorithmType.Sha256],
+                md5 = hashes[HashAlgorithmType.Md5],
+                sha1 = hashes[HashAlgorithmType.Sha1]
+            });
+        }
+        catch (Exception ex)
+        {
+            PostToWeb(new { requestId, action = "compute_hashes_result", success = false, message = ex.Message });
+        }
+    }
+
+    private async Task HandleVerifyChecksumAsync(JsonElement root, string? requestId)
+    {
+        var filePath = root.TryGetProperty("filePath", out var pProp) ? pProp.GetString() : null;
+        var expectedHash = root.TryGetProperty("expectedHash", out var hProp) ? hProp.GetString()?.Trim() : null;
+        var algoName = root.TryGetProperty("algorithm", out var aProp) ? aProp.GetString()?.Trim() : null;
+
+        if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+        {
+            PostToWeb(new { requestId, action = "verify_checksum_result", success = false, message = "File not found on disk." });
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(expectedHash))
+        {
+            PostToWeb(new { requestId, action = "verify_checksum_result", success = false, message = "No expected checksum provided." });
+            return;
+        }
+
+        try
+        {
+            var algo = !string.IsNullOrWhiteSpace(algoName)
+                ? ChecksumVerifier.ParseAlgorithm(algoName)
+                : ChecksumVerifier.InferAlgorithmFromHash(expectedHash);
+
+            var matches = await ChecksumVerifier.VerifyAsync(filePath, expectedHash, algo);
+            var actual = await ChecksumVerifier.ComputeHashAsync(filePath, algo);
+
+            PostToWeb(new
+            {
+                requestId,
+                action = "verify_checksum_result",
+                success = true,
+                matched = matches,
+                algorithm = algo.ToString().ToUpperInvariant(),
+                expectedHash,
+                actualHash = actual,
+                filePath
+            });
+        }
+        catch (Exception ex)
+        {
+            PostToWeb(new { requestId, action = "verify_checksum_result", success = false, message = ex.Message });
+        }
     }
 
     private void PostToWeb(object message)

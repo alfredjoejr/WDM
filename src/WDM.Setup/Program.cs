@@ -15,7 +15,7 @@ public static class Program
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine(@"
 ===================================================================
-        WDM (Windows Download Manager) v1.0.0 Setup Wizard
+        WDM (Windows Download Manager) v1.1.0 Setup Wizard
 ===================================================================");
         Console.ResetColor();
 

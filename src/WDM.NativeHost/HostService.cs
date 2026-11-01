@@ -132,7 +132,7 @@ public sealed class HostService
                     {
                         requestId,
                         status = "pong",
-                        version = "1.0.0",
+                        version = "1.1.0",
                         engine = ".NET 10"
                     }, cancellationToken);
                     break;

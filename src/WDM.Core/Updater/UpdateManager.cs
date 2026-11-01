@@ -8,8 +8,8 @@ namespace WDM.Core.Updater;
 
 public record UpdateCheckResult
 {
-    public string CurrentVersion { get; init; } = "1.0.0";
-    public string LatestVersion { get; init; } = "1.0.0";
+    public string CurrentVersion { get; init; } = "1.1.0";
+    public string LatestVersion { get; init; } = "1.1.0";
     public bool IsUpdateAvailable { get; init; }
     public string? ReleaseTitle { get; init; }
     public string? ReleaseNotes { get; init; }
@@ -26,7 +26,7 @@ public record UpdateCheckResult
 public class UpdateManager
 {
     public const string DefaultGitHubRepo = "alfredjoejr/WDM";
-    public const string AppVersion = "1.0.0";
+    public const string AppVersion = "1.1.0";
 
     private static readonly HttpClient Http = CreateHttpClient();
 

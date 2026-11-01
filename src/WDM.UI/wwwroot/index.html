@@ -320,7 +320,7 @@
               <h2>WDM — Windows Download Manager</h2>
               <p>High-speed, multi-connection accelerated download manager & media grabber for Windows.</p>
               <div class="version-badges">
-                <span class="status-pill blue" id="infoCurrentVersionBadge">Version 1.0.0 (Official Release)</span>
+                <span class="status-pill blue" id="infoCurrentVersionBadge">Version 1.1.0 (Official Release)</span>
                 <span class="status-pill green">.NET 10 Evergreen</span>
               </div>
             </div>
@@ -442,6 +442,34 @@
             <span class="k">Range Requests</span>
             <span id="modalRangeStatus" class="status-pill green">Supported</span>
           </div>
+          <div class="probe-line" id="modalServerHashLine" style="display: none;">
+            <span class="k">Server Hash</span>
+            <span id="modalServerHashValue" class="status-pill blue mono" style="font-size: 11px; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">--</span>
+          </div>
+        </div>
+
+        <!-- Checksum Verification Input Block -->
+        <div class="field-block" style="margin-top: 2px;">
+          <label class="field-title" style="display: flex; justify-content: space-between; align-items: center;">
+            <span>Integrity Verification (Optional)</span>
+            <span style="font-size: 11px; color: var(--label-tertiary);">Auto-verifies upon 100%</span>
+          </label>
+          <div class="input-with-button" style="gap: 8px;">
+            <input type="text" id="modalExpectedHash" class="glass-text-field mono" placeholder="Paste expected SHA-256 / SHA-1 / MD5 hash..." spellcheck="false" style="font-size: 12px;">
+            <div class="apple-select" id="modalSelectHashAlgo" style="width: 115px; flex-shrink: 0;">
+              <button type="button" class="apple-select-trigger" data-value="auto" style="height: 38px; padding: 0 10px;">
+                <span class="trigger-label">Auto</span>
+                <svg class="chevron-icon" viewBox="0 0 20 20"><path d="M5.293 7.293a1 1 0 0 1 1.414 0L10 10.586l3.293-3.293a1 1 0 1 1 1.414 1.414l-4 4a1 1 0 0 1-1.414 0l-4-4a1 1 0 0 1 0-1.414z"/></svg>
+              </button>
+              <div class="apple-select-menu">
+                <div class="select-item active" data-value="auto"><span>Auto-detect</span></div>
+                <div class="select-item" data-value="sha256"><span>SHA-256</span></div>
+                <div class="select-item" data-value="md5"><span>MD5</span></div>
+                <div class="select-item" data-value="sha1"><span>SHA-1</span></div>
+                <div class="select-item" data-value="sha512"><span>SHA-512</span></div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- Dropdowns Grid -->
@@ -562,6 +590,69 @@
       <div class="modal-actions-bar">
         <button class="apple-btn apple-btn-glass" id="btnCancelDeleteModal">Cancel</button>
         <button class="apple-btn apple-btn-primary" id="btnConfirmDeleteModal" style="background: linear-gradient(180deg, #ff453a 0%, #d70015 100%); border-color: rgba(255, 69, 58, 0.5);">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Apple Sheet Modal: Verify & Inspect Checksums Modal -->
+  <div class="modal-backdrop" id="verifyHashModal">
+    <div class="modal-sheet glass-modal" style="max-width: 500px;">
+      <div class="modal-top">
+        <h3 id="verifyModalHeading">File Checksum & Integrity</h3>
+        <button class="modal-close-circle" id="btnCloseVerifyModal">✕</button>
+      </div>
+
+      <div class="modal-content-body" style="gap: 14px;">
+        <div style="font-size: 12.5px; color: var(--label-secondary); line-height: 1.4; word-break: break-all;">
+          <b id="verifyModalFileName" style="color: var(--label-primary); display: block; font-size: 13.5px; margin-bottom: 3px;">file.zip</b>
+          <span id="verifyModalFilePath" style="color: var(--label-tertiary); font-size: 11.5px;">C:\Users\...</span>
+        </div>
+
+        <!-- Calculated Hashes Box -->
+        <div class="probe-card glass-panel" style="background: rgba(255, 255, 255, 0.03); gap: 10px;">
+          <div class="probe-line" style="flex-direction: column; align-items: flex-start; gap: 4px;">
+            <div style="display: flex; justify-content: space-between; width: 100%; align-items: center;">
+              <span class="k" style="font-weight: 600;">SHA-256</span>
+              <button class="apple-btn apple-btn-glass btn-copy-hash" data-target="verifySha256" style="height: 22px; padding: 0 8px; font-size: 10px;">Copy</button>
+            </div>
+            <code id="verifySha256" class="mono" style="font-size: 11px; word-break: break-all; color: #38a5ff; user-select: all;">Calculating...</code>
+          </div>
+
+          <div class="probe-line" style="flex-direction: column; align-items: flex-start; gap: 4px; border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 8px;">
+            <div style="display: flex; justify-content: space-between; width: 100%; align-items: center;">
+              <span class="k" style="font-weight: 600;">MD5</span>
+              <button class="apple-btn apple-btn-glass btn-copy-hash" data-target="verifyMd5" style="height: 22px; padding: 0 8px; font-size: 10px;">Copy</button>
+            </div>
+            <code id="verifyMd5" class="mono" style="font-size: 11px; word-break: break-all; color: var(--label-primary); user-select: all;">Calculating...</code>
+          </div>
+
+          <div class="probe-line" style="flex-direction: column; align-items: flex-start; gap: 4px; border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 8px;">
+            <div style="display: flex; justify-content: space-between; width: 100%; align-items: center;">
+              <span class="k" style="font-weight: 600;">SHA-1</span>
+              <button class="apple-btn apple-btn-glass btn-copy-hash" data-target="verifySha1" style="height: 22px; padding: 0 8px; font-size: 10px;">Copy</button>
+            </div>
+            <code id="verifySha1" class="mono" style="font-size: 11px; word-break: break-all; color: var(--label-primary); user-select: all;">Calculating...</code>
+          </div>
+        </div>
+
+        <!-- Check Against Expected Hash -->
+        <div class="field-block">
+          <label class="field-title">Compare with Expected Hash</label>
+          <div class="input-with-button">
+            <input type="text" id="verifyCompareInput" class="glass-text-field mono" placeholder="Paste expected hash to compare..." spellcheck="false" style="font-size: 12px;">
+            <button class="apple-btn apple-btn-primary" id="btnRunCompare" style="white-space: nowrap;">Compare</button>
+          </div>
+        </div>
+
+        <!-- Verification Result Banner -->
+        <div id="verifyResultBanner" style="display: none; padding: 10px 14px; border-radius: 8px; font-size: 12.5px; align-items: center; gap: 8px;">
+          <span id="verifyResultIcon" style="font-size: 16px;">✓</span>
+          <span id="verifyResultText" style="flex: 1; font-weight: 500;">Hash matched!</span>
+        </div>
+      </div>
+
+      <div class="modal-actions-bar">
+        <button class="apple-btn apple-btn-glass" id="btnDoneVerifyModal" style="width: 100%;">Done</button>
       </div>
     </div>
   </div>

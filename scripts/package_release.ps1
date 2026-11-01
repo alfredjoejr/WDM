@@ -1,7 +1,7 @@
 # WDM Release Packaging Script
 
 $ErrorActionPreference = "Stop"
-$Version = "1.0.0"
+$Version = "1.1.0"
 $RootDir = Resolve-Path "$PSScriptRoot/.."
 $DistDir = "$RootDir/dist"
 $StagingDir = "$DistDir/WDM-v$Version-windows-x64"

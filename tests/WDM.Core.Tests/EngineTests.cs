@@ -80,6 +80,20 @@ public class EngineTests : IDisposable
 
         var isValid = await ChecksumVerifier.VerifyAsync(targetFile, hash, HashAlgorithmType.Sha256);
         Assert.True(isValid);
+
+        // Test ComputeAllHashesAsync multi-algorithm hashing
+        var allHashes = await ChecksumVerifier.ComputeAllHashesAsync(targetFile);
+        Assert.True(allHashes.ContainsKey(HashAlgorithmType.Sha256));
+        Assert.True(allHashes.ContainsKey(HashAlgorithmType.Md5));
+        Assert.True(allHashes.ContainsKey(HashAlgorithmType.Sha1));
+        Assert.Equal(hash, allHashes[HashAlgorithmType.Sha256]);
+        Assert.Equal(32, allHashes[HashAlgorithmType.Md5].Length);
+        Assert.Equal(40, allHashes[HashAlgorithmType.Sha1].Length);
+
+        // Test algorithm inference
+        Assert.Equal(HashAlgorithmType.Md5, ChecksumVerifier.InferAlgorithmFromHash(allHashes[HashAlgorithmType.Md5]));
+        Assert.Equal(HashAlgorithmType.Sha1, ChecksumVerifier.InferAlgorithmFromHash(allHashes[HashAlgorithmType.Sha1]));
+        Assert.Equal(HashAlgorithmType.Sha256, ChecksumVerifier.InferAlgorithmFromHash(hash));
     }
 
     [Fact]

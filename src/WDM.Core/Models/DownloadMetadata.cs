@@ -14,4 +14,6 @@ public sealed class DownloadMetadata
     public DateTimeOffset? LastModified { get; init; }
     public string? ContentType { get; init; }
     public Version? HttpVersion { get; init; }
+    public string? ServerMd5 { get; init; }
+    public string? ServerSha256 { get; init; }
 }

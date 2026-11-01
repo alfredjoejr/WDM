@@ -65,9 +65,27 @@
   const btnBrowseMediaLocation = document.getElementById('btnBrowseMediaLocation');
   const chkRememberLocation = document.getElementById('chkRememberLocation');
 
-  let defaultDownloadDirectory = '';
-  let currentMediaTarget = null;
-  let pendingDeleteTask = null;
+  // Checksum Verification Modal Elements
+  const verifyHashModal = document.getElementById('verifyHashModal');
+  const btnCloseVerifyModal = document.getElementById('btnCloseVerifyModal');
+  const btnDoneVerifyModal = document.getElementById('btnDoneVerifyModal');
+  const verifyModalFileName = document.getElementById('verifyModalFileName');
+  const verifyModalFilePath = document.getElementById('verifyModalFilePath');
+  const verifySha256 = document.getElementById('verifySha256');
+  const verifyMd5 = document.getElementById('verifyMd5');
+  const verifySha1 = document.getElementById('verifySha1');
+  const verifyCompareInput = document.getElementById('verifyCompareInput');
+  const btnRunCompare = document.getElementById('btnRunCompare');
+  const verifyResultBanner = document.getElementById('verifyResultBanner');
+  const verifyResultIcon = document.getElementById('verifyResultIcon');
+  const verifyResultText = document.getElementById('verifyResultText');
+
+  const modalExpectedHash = document.getElementById('modalExpectedHash');
+  const modalSelectHashAlgo = document.getElementById('modalSelectHashAlgo');
+  const modalServerHashLine = document.getElementById('modalServerHashLine');
+  const modalServerHashValue = document.getElementById('modalServerHashValue');
+
+  let currentVerifyTask = null;
 
   // Delete Confirmation Modal
   const deleteConfirmModal = document.getElementById('deleteConfirmModal');
@@ -367,6 +385,17 @@
           task.speedBytes = 0;
           task.filePath = msg.filePath;
           task.sha256 = msg.sha256;
+          task.md5 = msg.md5;
+          task.sha1 = msg.sha1;
+          task.hashMatched = msg.hashMatched;
+          task.hashMatchError = msg.hashMatchError;
+
+          if (msg.hashMatched === false) {
+            showToast("⚠️ Warning: Checksum mismatch! Downloaded file may be corrupted.", 5000);
+          } else if (msg.hashMatched === true) {
+            showToast("✓ Integrity verified! Checksum matched successfully.", 3500);
+          }
+
           renderDownloads();
         }
         break;
@@ -625,6 +654,8 @@
           <div class="task-name-row">
             <span class="task-filename" title="${task.fileName}">${task.fileName}</span>
             <span class="task-status-pill ${statusClass}">${task.status}</span>
+            ${task.hashMatched === true ? `<span class="task-status-pill green" title="File integrity verified (checksum matched)">✓ Verified</span>` : ''}
+            ${task.hashMatched === false ? `<span class="task-status-pill" style="background: rgba(255, 69, 58, 0.2); color: #ff6961; border: 1px solid rgba(255,69,58,0.4);" title="${task.hashMatchError || 'Checksum mismatch! File may be corrupted'}">⚠️ Corrupted</span>` : ''}
           </div>
           <div class="task-url" title="${task.url}">${task.url}</div>
         </div>
@@ -633,6 +664,9 @@
             <svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
           </button>
           ${task.status === 'Completed' ? `
+            <button class="icon-btn btn-verify-hash" title="Inspect & Verify Hashes (SHA-256 / MD5 / SHA-1)">
+              <svg viewBox="0 0 24 24"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></svg>
+            </button>
             <button class="icon-btn btn-open-file" title="Open File">
               <svg viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
             </button>
@@ -675,6 +709,22 @@
           <div><b style="color: var(--label-primary);">Source URL:</b> <span style="word-break: break-all; color: var(--label-tertiary);">${task.url}</span></div>
           <div><b style="color: var(--label-primary);">Saved To:</b> <span style="word-break: break-all; color: #38a5ff;">${task.filePath || task.destinationDirectory || 'Downloads'}</span></div>
           <div><b style="color: var(--label-primary);">Status:</b> <span>${task.status} (${task.speed || 'Done'})</span></div>
+          ${task.sha256 ? `
+            <div style="margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.06);">
+              <b style="color: var(--label-primary);">SHA-256:</b> <code class="mono" style="word-break: break-all; color: #38a5ff; user-select: all; font-size: 11px;">${task.sha256}</code>
+            </div>
+          ` : ''}
+          ${task.md5 ? `
+            <div>
+              <b style="color: var(--label-primary);">MD5:</b> <code class="mono" style="word-break: break-all; color: var(--label-primary); user-select: all; font-size: 11px;">${task.md5}</code>
+            </div>
+          ` : ''}
+          ${task.hashMatched === true ? `
+            <div style="color: #30d158; font-weight: 500;">✓ Checksum integrity verified — file is intact and not corrupted.</div>
+          ` : ''}
+          ${task.hashMatched === false ? `
+            <div style="color: #ff6961; font-weight: 500;">⚠️ ${task.hashMatchError || 'Checksum mismatch! File may be corrupted or modified.'}</div>
+          ` : ''}
         </div>
         ${task.chunks && task.chunks.length > 0 ? `
           <div class="drawer-header" style="margin-top: 8px;">CONCURRENT STREAMS (${task.chunks.length} TOTAL)</div>
@@ -693,6 +743,14 @@
         chevronSvg.style.transform = drawer.classList.contains('open') ? 'rotate(180deg)' : 'rotate(0deg)';
       }
     });
+
+    const verifyHashBtn = card.querySelector('.btn-verify-hash');
+    if (verifyHashBtn) {
+      verifyHashBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openVerifyHashModal(task);
+      });
+    }
 
     const openFileBtn = card.querySelector('.btn-open-file');
     if (openFileBtn) {
@@ -1025,6 +1083,18 @@
       modalFileSize.textContent = res.data.totalBytes ? formatBytes(res.data.totalBytes) : 'Streaming / Unknown';
       modalRangeStatus.textContent = res.data.acceptsRanges ? '16x Multi-Thread' : 'Single Stream';
       modalRangeStatus.className = 'status-pill ' + (res.data.acceptsRanges ? 'green' : 'yellow');
+
+      if (res.data.serverSha256) {
+        modalServerHashLine.style.display = 'flex';
+        modalServerHashValue.textContent = 'SHA-256: ' + res.data.serverSha256;
+        modalServerHashValue.title = res.data.serverSha256;
+      } else if (res.data.serverMd5) {
+        modalServerHashLine.style.display = 'flex';
+        modalServerHashValue.textContent = 'MD5: ' + res.data.serverMd5;
+        modalServerHashValue.title = res.data.serverMd5;
+      } else {
+        modalServerHashLine.style.display = 'none';
+      }
     }
   }
 
@@ -1034,21 +1104,27 @@
 
     const connectionsTrigger = modalSelectConnections.querySelector('.apple-select-trigger');
     const speedTrigger = modalSelectSpeedLimit.querySelector('.apple-select-trigger');
+    const hashAlgoTrigger = modalSelectHashAlgo ? modalSelectHashAlgo.querySelector('.apple-select-trigger') : null;
 
     const connections = parseInt(connectionsTrigger.getAttribute('data-value'), 10) || 16;
     const speedLimit = parseInt(speedTrigger.getAttribute('data-value'), 10) || 0;
     const fileName = modalFileName.value.trim() || null;
+    const expectedHash = modalExpectedHash ? modalExpectedHash.value.trim() : null;
+    const hashAlgorithm = hashAlgoTrigger ? hashAlgoTrigger.getAttribute('data-value') : null;
 
     sendToHost('start_download', {
       url,
       fileName,
       connections,
-      speedLimit
+      speedLimit,
+      expectedHash: expectedHash || null,
+      hashAlgorithm: (hashAlgorithm && hashAlgorithm !== 'auto') ? hashAlgorithm : null
     });
 
     closeModal();
     modalUrl.value = '';
     modalFileName.value = '';
+    if (modalExpectedHash) modalExpectedHash.value = '';
   });
 
   // Media Sniffer Handlers
@@ -1468,6 +1544,120 @@
 
   // Automatically check for updates & local code modifications 1.5s after startup
   setTimeout(() => runUpdateCheck(false), 1500);
+
+  // Checksum Verification Modal Logic
+  async function openVerifyHashModal(task) {
+    if (!task) return;
+    currentVerifyTask = task;
+
+    verifyModalFileName.textContent = task.fileName || 'file.bin';
+    verifyModalFilePath.textContent = task.filePath || task.destinationDirectory || 'Unknown Path';
+
+    verifySha256.textContent = task.sha256 || 'Computing...';
+    verifyMd5.textContent = task.md5 || 'Computing...';
+    verifySha1.textContent = task.sha1 || 'Computing...';
+
+    verifyCompareInput.value = '';
+    verifyResultBanner.style.display = 'none';
+
+    verifyHashModal.classList.add('open');
+
+    const p = task.filePath || task.destinationDirectory;
+    if (p && (!task.sha256 || !task.md5 || !task.sha1)) {
+      const res = await sendToHost('compute_hashes', { filePath: p });
+      if (res && res.success) {
+        task.sha256 = res.sha256;
+        task.md5 = res.md5;
+        task.sha1 = res.sha1;
+        verifySha256.textContent = res.sha256;
+        verifyMd5.textContent = res.md5;
+        verifySha1.textContent = res.sha1;
+      } else {
+        if (!task.sha256) verifySha256.textContent = 'Could not compute hash';
+        if (!task.md5) verifyMd5.textContent = 'Could not compute hash';
+        if (!task.sha1) verifySha1.textContent = 'Could not compute hash';
+      }
+    }
+  }
+
+  function closeVerifyHashModal() {
+    verifyHashModal.classList.remove('open');
+    currentVerifyTask = null;
+  }
+
+  if (btnCloseVerifyModal) btnCloseVerifyModal.addEventListener('click', closeVerifyHashModal);
+  if (btnDoneVerifyModal) btnDoneVerifyModal.addEventListener('click', closeVerifyHashModal);
+
+  verifyHashModal.addEventListener('click', (e) => {
+    if (e.target === verifyHashModal) closeVerifyHashModal();
+  });
+
+  document.querySelectorAll('.btn-copy-hash').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const targetId = btn.getAttribute('data-target');
+      const el = document.getElementById(targetId);
+      if (el && el.textContent && !el.textContent.includes('...')) {
+        try {
+          await navigator.clipboard.writeText(el.textContent.trim());
+          showToast(`Copied ${targetId.replace('verify', '').toUpperCase()} hash to clipboard!`);
+        } catch {
+          showToast('Failed to copy to clipboard.');
+        }
+      }
+    });
+  });
+
+  if (btnRunCompare) {
+    btnRunCompare.addEventListener('click', () => {
+      const expected = verifyCompareInput.value.trim().toLowerCase();
+      if (!expected) {
+        showToast('Please paste a hash to compare.');
+        return;
+      }
+
+      const sha = (verifySha256.textContent || '').trim().toLowerCase();
+      const md5 = (verifyMd5.textContent || '').trim().toLowerCase();
+      const sha1 = (verifySha1.textContent || '').trim().toLowerCase();
+
+      let matched = false;
+      let matchedAlgo = '';
+
+      if (expected === sha) {
+        matched = true;
+        matchedAlgo = 'SHA-256';
+      } else if (expected === md5) {
+        matched = true;
+        matchedAlgo = 'MD5';
+      } else if (expected === sha1) {
+        matched = true;
+        matchedAlgo = 'SHA-1';
+      }
+
+      verifyResultBanner.style.display = 'flex';
+      if (matched) {
+        verifyResultBanner.style.background = 'rgba(48, 209, 88, 0.15)';
+        verifyResultBanner.style.border = '1px solid rgba(48, 209, 88, 0.35)';
+        verifyResultBanner.style.color = '#30d158';
+        verifyResultIcon.textContent = '✓';
+        verifyResultText.textContent = `Match Verified! Checksum matches ${matchedAlgo}. File is intact.`;
+        if (currentVerifyTask) {
+          currentVerifyTask.hashMatched = true;
+          renderDownloads();
+        }
+      } else {
+        verifyResultBanner.style.background = 'rgba(255, 69, 58, 0.15)';
+        verifyResultBanner.style.border = '1px solid rgba(255, 69, 58, 0.35)';
+        verifyResultBanner.style.color = '#ff6961';
+        verifyResultIcon.textContent = '⚠️';
+        verifyResultText.textContent = 'MISMATCH! The file hash does not match your expected checksum. File may be corrupted or modified.';
+        if (currentVerifyTask) {
+          currentVerifyTask.hashMatched = false;
+          renderDownloads();
+        }
+      }
+    });
+  }
 
   // Utility
   function formatBytes(bytes) {
