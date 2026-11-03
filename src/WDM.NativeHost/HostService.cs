@@ -23,6 +23,7 @@ public sealed class HostService
     private static readonly object IpcLock = new();
     private static readonly object UiLaunchLock = new();
     private static DateTime _lastUiLaunchUtc = DateTime.MinValue;
+    private static DateTime _lastDownloadPromptUtc = DateTime.MinValue;
 
     public HostService()
     {
@@ -64,6 +65,11 @@ public sealed class HostService
                             if (action == "cancel_download" || action == "pause_download")
                             {
                                 HandleCancelDownload(root);
+                            }
+                            else if (action is "download_started" or "download_progress" or "download_completed" or "download_failed"
+                                     or "media_download_started" or "media_download_progress" or "media_download_completed" or "media_download_failed")
+                            {
+                                await HostProtocol.SendMessageAsync(root.Clone(), CancellationToken.None);
                             }
                         }
                         catch { }
@@ -231,6 +237,7 @@ public sealed class HostService
         }
 
         var downloadId = Guid.NewGuid().ToString("N");
+        _lastDownloadPromptUtc = DateTime.UtcNow;
 
         // Ensure WDM.UI is running in compact popup mode (outside the browser's Job Object)
         EnsureUiRunning(compactPopup: true);
@@ -251,7 +258,7 @@ public sealed class HostService
         var startAck = new
         {
             requestId,
-            action = "download_started",
+            action = "download_prompt_opened",
             downloadId,
             url,
             fileName = customFileName,
@@ -317,6 +324,7 @@ public sealed class HostService
         var destinationDirectory = root.TryGetProperty("destinationDirectory", out var dProp) ? dProp.GetString() : null;
 
         var downloadId = Guid.NewGuid().ToString("N");
+        _lastDownloadPromptUtc = DateTime.UtcNow;
 
         // Ensure WDM.UI is running in compact popup mode (outside the browser's Job Object)
         EnsureUiRunning(compactPopup: true);
@@ -342,7 +350,7 @@ public sealed class HostService
         var startAck = new
         {
             requestId,
-            action = "media_download_started",
+            action = "download_prompt_opened",
             downloadId,
             url,
             fileName = fileName ?? "Media Video.mp4",
@@ -625,6 +633,13 @@ public sealed class HostService
             ? uProp.GetString()
             : null;
 
-        return EnsureUiRunning(targetUrl, broadcastBringToFront: true);
+        // If the browser extension's legacy content.js sent open_app right alongside download_media,
+        // keep WDM in compact popup mode instead of switching to the full dashboard.
+        if (string.IsNullOrWhiteSpace(targetUrl) && (DateTime.UtcNow - _lastDownloadPromptUtc).TotalSeconds < 4)
+        {
+            return EnsureUiRunning(null, broadcastBringToFront: false, compactPopup: true);
+        }
+
+        return EnsureUiRunning(targetUrl, broadcastBringToFront: true, compactPopup: false);
     }
 }

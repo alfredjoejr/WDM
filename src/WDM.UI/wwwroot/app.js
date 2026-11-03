@@ -1880,6 +1880,32 @@
 
     showPopupStage('config');
 
+    // If media stream is missing resolution/fileSizeBytes (e.g. from signed 1.0.0 XPI), fetch stream metadata in background
+    if (isMedia && msg.url && (!activePopupPayload.fileSizeBytes || !activePopupPayload.resolution)) {
+      if (popupFileSize && !activePopupPayload.fileSizeBytes) popupFileSize.textContent = 'Inspecting stream...';
+      sendToHost('sniff_media', { url: msg.url }).then(res => {
+        if (!activePopupPayload || activePopupPayload.downloadId !== dlId) return;
+        if (res && res.success && res.data && Array.isArray(res.data.formats)) {
+          const matched = res.data.formats.find(f => f.formatId === activePopupPayload.formatId) || res.data.formats[0];
+          if (matched) {
+            if (matched.fileSizeBytes && matched.fileSizeBytes > 0) {
+              activePopupPayload.fileSizeBytes = matched.fileSizeBytes;
+              if (popupFileSize) popupFileSize.textContent = formatBytes(matched.fileSizeBytes);
+            } else if (popupFileSize) {
+              popupFileSize.textContent = matched.note || 'Dynamic Stream';
+            }
+            if (matched.resolution && popupFormatBadge) {
+              activePopupPayload.resolution = matched.resolution;
+              const eLbl = (matched.extension || activePopupPayload.extension || 'MP4').toUpperCase();
+              popupFormatBadge.textContent = activePopupPayload.isAudioOnly ? `AUDIO • ${eLbl}` : `${matched.resolution} • ${eLbl}`;
+            }
+          }
+        } else if (popupFileSize && popupFileSize.textContent === 'Inspecting stream...') {
+          popupFileSize.textContent = 'Dynamic Stream';
+        }
+      });
+    }
+
     // If regular HTTP file without known size, probe metadata in background
     if (!isMedia && msg.url) {
       sendToHost('probe_url', { url: msg.url }).then(res => {

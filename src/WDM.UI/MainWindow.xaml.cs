@@ -28,6 +28,7 @@ public partial class MainWindow : Window
     private bool _isInitialized;
     private bool _isWebLoaded;
     private bool _isCompactMode;
+    private DateTime _lastPopupPromptUtc = DateTime.MinValue;
 
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
@@ -258,16 +259,49 @@ public partial class MainWindow : Window
 
                 fs.Seek(_ipcLastPosition, SeekOrigin.Begin);
                 using var reader = new StreamReader(fs);
-                string? line;
-                var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                while ((line = reader.ReadLine()) != null)
+                var lines = new List<string>();
+                string? rawLine;
+                while ((rawLine = reader.ReadLine()) != null)
                 {
-                    if (string.IsNullOrWhiteSpace(line) || !line.TrimStart().StartsWith('{')) continue;
+                    if (!string.IsNullOrWhiteSpace(rawLine) && rawLine.TrimStart().StartsWith('{'))
+                    {
+                        lines.Add(rawLine);
+                    }
+                }
+                _ipcLastPosition = fs.Position;
 
+                var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+                // First pass: detect if any line in this batch is a download prompt from the browser extension
+                foreach (var l in lines)
+                {
+                    try
+                    {
+                        using var d = JsonDocument.Parse(l);
+                        var r = d.RootElement;
+                        if (!r.TryGetProperty("timestamp", out var tsP) || !tsP.TryGetInt64(out var tsV) || (now - tsV > 15000)) continue;
+                        var act = r.TryGetProperty("action", out var aP) ? aP.GetString() : null;
+                        if (act == "ipc_start_download" || act == "ipc_download_media")
+                        {
+                            _lastPopupPromptUtc = DateTime.UtcNow;
+                        }
+                    }
+                    catch { }
+                }
+
+                // Second pass: process events
+                foreach (var line in lines)
+                {
                     try
                     {
                         using var doc = JsonDocument.Parse(line);
                         var root = doc.RootElement;
+
+                        // Ignore outgoing UI progress sync events written by MainWindow itself
+                        if (root.TryGetProperty("source", out var srcProp) && srcProp.GetString() == "ui")
+                        {
+                            continue;
+                        }
 
                         // Drop stale events from previous sessions (older than 15s or missing timestamp)
                         if (!root.TryGetProperty("timestamp", out var tsProp) || !tsProp.TryGetInt64(out var ts) || (now - ts > 15000))
@@ -279,10 +313,18 @@ public partial class MainWindow : Window
 
                         if (action == "bring_to_front")
                         {
-                            SetCompactPopupMode(false);
-                            if (root.TryGetProperty("url", out var uProp) && uProp.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(uProp.GetString()))
+                            var uVal = root.TryGetProperty("url", out var uProp) && uProp.ValueKind == JsonValueKind.String ? uProp.GetString() : null;
+                            // If legacy content.js sent open_app right alongside a download prompt, keep compact popup mode
+                            if (string.IsNullOrWhiteSpace(uVal) && (DateTime.UtcNow - _lastPopupPromptUtc).TotalSeconds < 6)
                             {
-                                PostToWeb(new { action = "open_url", url = uProp.GetString() });
+                                BringToFront();
+                                continue;
+                            }
+
+                            SetCompactPopupMode(false);
+                            if (!string.IsNullOrWhiteSpace(uVal))
+                            {
+                                PostToWeb(new { action = "open_url", url = uVal });
                             }
                             else
                             {
@@ -296,6 +338,7 @@ public partial class MainWindow : Window
                             {
                                 continue;
                             }
+                            _lastPopupPromptUtc = DateTime.UtcNow;
                             SetCompactPopupMode(true);
                             WebView?.CoreWebView2?.PostWebMessageAsJson(line);
                         }
@@ -316,8 +359,6 @@ public partial class MainWindow : Window
                     }
                     catch { }
                 }
-
-                _ipcLastPosition = fs.Position;
             }
             catch { }
         };
@@ -547,11 +588,21 @@ public partial class MainWindow : Window
             url,
             fileName
         });
+        BroadcastIpcEvent(new
+        {
+            source = "ui",
+            action = "download_started",
+            downloadId,
+            url,
+            fileName,
+            timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        });
 
         _ = Task.Run(async () =>
         {
             try
             {
+                long lastIpcBroadcastMs = 0;
                 engine.ProgressChanged += snapshot =>
                 {
                     PostToWeb(new
@@ -576,6 +627,23 @@ public partial class MainWindow : Window
                             status = c.Status.ToString()
                         })
                     });
+
+                    var nowMs = Environment.TickCount64;
+                    if (nowMs - lastIpcBroadcastMs >= 500)
+                    {
+                        lastIpcBroadcastMs = nowMs;
+                        BroadcastIpcEvent(new
+                        {
+                            source = "ui",
+                            action = "download_progress",
+                            downloadId,
+                            percentage = snapshot.ProgressPercentage,
+                            speed = snapshot.SpeedFormatted,
+                            downloaded = snapshot.DownloadedFormatted,
+                            total = snapshot.TotalFormatted,
+                            timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                        });
+                    }
                 };
 
                 var options = new DownloadOptions
@@ -649,6 +717,14 @@ public partial class MainWindow : Window
                     hashMatched,
                     hashMatchError
                 });
+                BroadcastIpcEvent(new
+                {
+                    source = "ui",
+                    action = "download_completed",
+                    downloadId,
+                    filePath = savedPath,
+                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                });
             }
             catch (Exception ex)
             {
@@ -657,6 +733,14 @@ public partial class MainWindow : Window
                     action = "download_failed",
                     downloadId,
                     error = ex.Message
+                });
+                BroadcastIpcEvent(new
+                {
+                    source = "ui",
+                    action = "download_failed",
+                    downloadId,
+                    error = ex.Message,
+                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
                 });
             }
             finally
@@ -910,11 +994,22 @@ public partial class MainWindow : Window
             formatId,
             destinationDirectory
         });
+        BroadcastIpcEvent(new
+        {
+            source = "ui",
+            action = "media_download_started",
+            downloadId,
+            url,
+            fileName = fileName ?? $"{title}.mp4",
+            formatId,
+            timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        });
 
         _ = Task.Run(async () =>
         {
             try
             {
+                long lastMediaIpcMs = 0;
                 var completedPath = await _mediaExtractor.DownloadMediaAsync(
                     url,
                     formatId,
@@ -930,6 +1025,20 @@ public partial class MainWindow : Window
                             percentage = percent,
                             status = statusLine
                         });
+                        var nowMs = Environment.TickCount64;
+                        if (nowMs - lastMediaIpcMs >= 500)
+                        {
+                            lastMediaIpcMs = nowMs;
+                            BroadcastIpcEvent(new
+                            {
+                                source = "ui",
+                                action = "media_download_progress",
+                                downloadId,
+                                percentage = percent,
+                                statusText = statusLine,
+                                timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                            });
+                        }
                     },
                     cancellationToken: cts.Token);
 
@@ -983,6 +1092,14 @@ public partial class MainWindow : Window
                     hashMatchError,
                     destinationDirectory = Directory.Exists(completedPath) ? completedPath : (Path.GetDirectoryName(completedPath) ?? destinationDirectory)
                 });
+                BroadcastIpcEvent(new
+                {
+                    source = "ui",
+                    action = "media_download_completed",
+                    downloadId,
+                    filePath = completedPath,
+                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                });
             }
             catch (OperationCanceledException)
             {
@@ -992,6 +1109,14 @@ public partial class MainWindow : Window
                     downloadId,
                     error = "Download stopped by user"
                 });
+                BroadcastIpcEvent(new
+                {
+                    source = "ui",
+                    action = "media_download_failed",
+                    downloadId,
+                    error = "Download stopped by user",
+                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                });
             }
             catch (Exception ex)
             {
@@ -1000,6 +1125,14 @@ public partial class MainWindow : Window
                     action = "media_download_failed",
                     downloadId,
                     error = ex.Message
+                });
+                BroadcastIpcEvent(new
+                {
+                    source = "ui",
+                    action = "media_download_failed",
+                    downloadId,
+                    error = ex.Message,
+                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
                 });
             }
             finally

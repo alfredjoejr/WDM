@@ -1451,7 +1451,8 @@ input:checked + .switch-pill:before {
 /* =========================================================
    IDM-STYLE COMPACT POPUP WINDOW MODE
    ========================================================= */
-body.compact-mode .desktop-shell {
+body.compact-mode .app-shell,
+body.compact-mode .ambient-glow {
   display: none !important;
 }
 
@@ -1460,6 +1461,9 @@ body.compact-mode #idmPopupPanel {
 }
 
 .idm-popup-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
   width: 100vw;
   height: 100vh;
   display: flex;

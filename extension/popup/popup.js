@@ -100,9 +100,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         <span>Start</span>
       `;
 
-      if (res && res.downloadId) {
+      if (res && (res.downloadId || res.action === 'download_prompt_opened')) {
         urlInput.value = '';
-        chrome.runtime.sendMessage({ action: 'open_app' });
       } else if (res && res.error) {
         alert("Error starting download: " + res.error);
       }
