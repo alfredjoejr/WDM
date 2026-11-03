@@ -85,6 +85,9 @@
   const modalServerHashLine = document.getElementById('modalServerHashLine');
   const modalServerHashValue = document.getElementById('modalServerHashValue');
 
+  let defaultDownloadDirectory = '';
+  let currentMediaTarget = null;
+  let pendingDeleteTask = null;
   let currentVerifyTask = null;
 
   // Delete Confirmation Modal
