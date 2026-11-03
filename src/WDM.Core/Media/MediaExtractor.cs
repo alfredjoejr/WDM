@@ -20,6 +20,17 @@ public sealed partial class MediaExtractor : IMediaExtractor
 
     private static string? _cachedYtDlpPath;
     private static string? _cachedFfmpegDir;
+    private static string? _preferredCookieArg;
+
+    private static readonly string[] BrowserCookieCandidates =
+    [
+        "--cookies-from-browser firefox",
+        "--cookies-from-browser chrome",
+        "--cookies-from-browser edge",
+        "--cookies-from-browser brave",
+        "--cookies-from-browser opera",
+        ""
+    ];
 
     public bool IsSupported(string url)
     {
@@ -165,33 +176,73 @@ public sealed partial class MediaExtractor : IMediaExtractor
             var ffmpegDir = GetFFmpegDirectory();
             var ffmpegArg = !string.IsNullOrWhiteSpace(ffmpegDir) ? $"--ffmpeg-location \"{ffmpegDir}\"" : string.Empty;
 
-            using var proc = new Process
+            var attempts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(_preferredCookieArg))
             {
-                StartInfo = new ProcessStartInfo
+                attempts.Add(_preferredCookieArg);
+            }
+            var isYouTube = url.Contains("youtube.com", StringComparison.OrdinalIgnoreCase) || url.Contains("youtu.be", StringComparison.OrdinalIgnoreCase);
+            if (isYouTube)
+            {
+                foreach (var c in BrowserCookieCandidates)
                 {
-                    FileName = ytDlpPath,
-                    Arguments = $"--dump-json --no-warnings --no-playlist {ffmpegArg} \"{url}\"",
-                    RedirectStandardInput = true,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
+                    if (!attempts.Contains(c)) attempts.Add(c);
                 }
-            };
-
-            proc.Start();
-            try { proc.StandardInput.Close(); } catch { }
-            var stdOutTask = proc.StandardOutput.ReadToEndAsync(cancellationToken);
-            var stdErrTask = proc.StandardError.ReadToEndAsync(cancellationToken);
-            await Task.WhenAll(stdOutTask, stdErrTask);
-            await proc.WaitForExitAsync(cancellationToken);
-
-            var json = await stdOutTask;
-
-            if (proc.ExitCode != 0 || string.IsNullOrWhiteSpace(json))
+            }
+            else
             {
-                var err = await stdErrTask;
-                System.Diagnostics.Debug.WriteLine($"[yt-dlp extract error] exit={proc.ExitCode}: {err}");
+                if (!attempts.Contains("")) attempts.Insert(0, "");
+                foreach (var c in BrowserCookieCandidates)
+                {
+                    if (!attempts.Contains(c)) attempts.Add(c);
+                }
+            }
+
+            string? json = null;
+
+            foreach (var cookieArg in attempts)
+            {
+                try
+                {
+                    var args = $"--dump-json --no-warnings --no-playlist {ffmpegArg} {cookieArg} \"{url}\"";
+                    using var proc = new Process
+                    {
+                        StartInfo = new ProcessStartInfo
+                        {
+                            FileName = ytDlpPath,
+                            Arguments = args,
+                            RedirectStandardInput = true,
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true,
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        }
+                    };
+
+                    proc.Start();
+                    try { proc.StandardInput.Close(); } catch { }
+                    var stdOutTask = proc.StandardOutput.ReadToEndAsync(cancellationToken);
+                    var stdErrTask = proc.StandardError.ReadToEndAsync(cancellationToken);
+                    await Task.WhenAll(stdOutTask, stdErrTask);
+                    await proc.WaitForExitAsync(cancellationToken);
+
+                    var outText = await stdOutTask;
+                    if (proc.ExitCode == 0 && !string.IsNullOrWhiteSpace(outText) && outText.TrimStart().StartsWith('{'))
+                    {
+                        json = outText;
+                        _preferredCookieArg = cookieArg;
+                        break;
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch { }
+            }
+
+            if (string.IsNullOrWhiteSpace(json))
+            {
                 return null;
             }
 
@@ -368,7 +419,10 @@ public sealed partial class MediaExtractor : IMediaExtractor
             formatArg = "-f \"bestvideo+bestaudio/best\" --merge-output-format mp4";
         }
 
-        var arguments = $"{formatArg} {ffmpegArg} --no-warnings --continue --newline --progress -o \"{outputTemplate}\" \"{url}\"";
+        var isYouTube = url.Contains("youtube.com", StringComparison.OrdinalIgnoreCase) || url.Contains("youtu.be", StringComparison.OrdinalIgnoreCase);
+        var cookieArg = _preferredCookieArg ?? (isYouTube ? "--cookies-from-browser firefox" : string.Empty);
+
+        var arguments = $"{formatArg} {ffmpegArg} {cookieArg} --no-warnings --continue --newline --progress -o \"{outputTemplate}\" \"{url}\"";
 
         using var proc = new Process
         {
