@@ -1448,3 +1448,256 @@ input:checked + .switch-pill:before {
   transform: translateY(-1px);
 }
 
+/* =========================================================
+   IDM-STYLE COMPACT POPUP WINDOW MODE
+   ========================================================= */
+body.compact-mode .desktop-shell {
+  display: none !important;
+}
+
+body.compact-mode #idmPopupPanel {
+  display: flex !important;
+}
+
+.idm-popup-panel {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: radial-gradient(circle at 20% 0%, rgba(0, 113, 227, 0.14), transparent 55%),
+              linear-gradient(180deg, #0b111e 0%, #05070a 100%);
+  color: var(--label-primary);
+  overflow: hidden;
+  user-select: none;
+}
+
+.idm-popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: rgba(16, 22, 36, 0.85);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.idm-popup-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.idm-popup-logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  box-shadow: 0 2px 8px rgba(0, 113, 227, 0.35);
+}
+
+.idm-popup-brand h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--label-primary);
+}
+
+.idm-popup-sub {
+  display: block;
+  font-size: 11px;
+  color: var(--label-tertiary);
+  margin-top: 1px;
+}
+
+.idm-popup-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.idm-open-main-btn {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 11.5px;
+  gap: 5px;
+}
+
+.idm-popup-stage {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.idm-popup-body {
+  flex: 1;
+  padding: 14px 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.idm-summary-card {
+  padding: 10px 13px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.idm-url-truncate {
+  font-size: 11px;
+  color: var(--label-tertiary);
+  max-width: 310px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.idm-extras-wrap {
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.02);
+  overflow: hidden;
+}
+
+.idm-extras-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  background: transparent;
+  border: none;
+  color: #38a5ff;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+}
+
+.idm-extras-toggle:hover {
+  background: rgba(0, 113, 227, 0.08);
+}
+
+.idm-extras-drawer {
+  padding: 10px 12px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.idm-extras-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.idm-native-select {
+  height: 34px;
+  padding: 0 8px;
+  font-size: 12px;
+  background-color: #101624;
+  color: var(--label-primary);
+  cursor: pointer;
+}
+
+.idm-native-select option {
+  background: #101624;
+  color: #fff;
+}
+
+.idm-progress-card {
+  padding: 13px 14px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.idm-telemetry-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.idm-stat-box {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.idm-stat-box .k {
+  font-size: 10px;
+  color: var(--label-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.idm-stat-box .v {
+  font-size: 12px;
+  color: var(--label-primary);
+}
+
+.idm-done-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+  border-radius: 10px;
+  background: rgba(48, 209, 88, 0.1);
+  border: 1px solid rgba(48, 209, 88, 0.3);
+}
+
+.idm-done-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(48, 209, 88, 0.2);
+  color: #30d158;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+.idm-after-actions-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.idm-action-tile {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.idm-action-tile svg {
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
+}
+
+.idm-popup-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 16px;
+  background: rgba(16, 22, 36, 0.9);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+

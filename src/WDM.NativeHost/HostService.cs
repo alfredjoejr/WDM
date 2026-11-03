@@ -232,9 +232,8 @@ public sealed class HostService
 
         var downloadId = Guid.NewGuid().ToString("N");
 
-        // Ensure WDM.UI is running (outside the browser's Job Object) and delegate the download to WDM.UI
-        // so that closing the browser never interrupts active downloads or kills WDM.UI.
-        EnsureUiRunning();
+        // Ensure WDM.UI is running in compact popup mode (outside the browser's Job Object)
+        EnsureUiRunning(compactPopup: true);
 
         var ipcCommand = new
         {
@@ -309,15 +308,18 @@ public sealed class HostService
     {
         var url = root.GetProperty("url").GetString()!;
         var formatId = root.TryGetProperty("formatId", out var fProp) ? fProp.GetString() : null;
+        var title = root.TryGetProperty("title", out var tProp) ? tProp.GetString() : null;
         var fileName = root.TryGetProperty("fileName", out var fnProp) ? fnProp.GetString() : null;
         var isAudioOnly = root.TryGetProperty("isAudioOnly", out var aoProp) && aoProp.GetBoolean();
+        var resolution = root.TryGetProperty("resolution", out var rProp) ? rProp.GetString() : null;
+        var extension = root.TryGetProperty("extension", out var eProp) ? eProp.GetString() : null;
+        var fileSizeBytes = root.TryGetProperty("fileSizeBytes", out var fsProp) && fsProp.ValueKind == JsonValueKind.Number && fsProp.TryGetInt64(out var fsVal) ? (long?)fsVal : null;
         var destinationDirectory = root.TryGetProperty("destinationDirectory", out var dProp) ? dProp.GetString() : null;
 
         var downloadId = Guid.NewGuid().ToString("N");
 
-        // Ensure WDM.UI is running (outside the browser's Job Object) and delegate the media download to WDM.UI
-        // so that closing the browser never terminates yt-dlp or WDM.UI.
-        EnsureUiRunning();
+        // Ensure WDM.UI is running in compact popup mode (outside the browser's Job Object)
+        EnsureUiRunning(compactPopup: true);
 
         var ipcCommand = new
         {
@@ -325,9 +327,13 @@ public sealed class HostService
             action = "ipc_download_media",
             downloadId,
             url,
+            title = title ?? Path.GetFileNameWithoutExtension(fileName ?? "Media Video"),
             fileName = fileName ?? "Media Video.mp4",
             formatId,
             isAudioOnly,
+            resolution,
+            extension,
+            fileSizeBytes,
             destinationDirectory,
             timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         };
@@ -372,7 +378,7 @@ public sealed class HostService
 
     private static string targetDirOrNull(string path) => Directory.Exists(path) ? path : (Path.GetDirectoryName(path) ?? string.Empty);
 
-    private static (bool Success, string? Message) EnsureUiRunning(string? targetUrl = null, bool broadcastBringToFront = false)
+    private static (bool Success, string? Message) EnsureUiRunning(string? targetUrl = null, bool broadcastBringToFront = false, bool compactPopup = false)
     {
         try
         {
@@ -467,9 +473,9 @@ public sealed class HostService
                         var full = Path.GetFullPath(path);
                         if (File.Exists(full))
                         {
-                            Program.Log($"EnsureUiRunning: Launching UI detached from browser Job Object: {full}");
+                            Program.Log($"EnsureUiRunning: Launching UI detached from browser Job Object: {full} (compactPopup={compactPopup})");
                             _lastUiLaunchUtc = DateTime.UtcNow;
-                            LaunchDetachedFromBrowserJob(full);
+                            LaunchDetachedFromBrowserJob(full, compactPopup ? "--popup" : null);
                             return (true, null);
                         }
                     }
@@ -498,16 +504,17 @@ public sealed class HostService
     /// 2. If the browser's Job Object blocks direct breakaway, spawns via WMI Win32_Process.Create (parented by WmiPrvSE.exe service).
     /// This guarantees WDM.UI stays open even when Firefox, Chrome, or Edge is closed.
     /// </summary>
-    private static void LaunchDetachedFromBrowserJob(string fullExePath)
+    private static void LaunchDetachedFromBrowserJob(string fullExePath, string? extraArgs = null)
     {
         var workDir = Path.GetDirectoryName(fullExePath) ?? AppDomain.CurrentDomain.BaseDirectory;
+        var argsSuffix = string.IsNullOrWhiteSpace(extraArgs) ? string.Empty : $" {extraArgs}";
 
         // Tier 1: Win32 CreateProcessW with CREATE_BREAKAWAY_FROM_JOB (instant, zero overhead)
         try
         {
             var si = new STARTUPINFO { cb = Marshal.SizeOf<STARTUPINFO>() };
             const uint flags = CREATE_BREAKAWAY_FROM_JOB | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS;
-            var cmdLine = $"\"{fullExePath}\"";
+            var cmdLine = $"\"{fullExePath}\"{argsSuffix}";
 
             if (CreateProcessW(fullExePath, cmdLine, IntPtr.Zero, IntPtr.Zero, false, flags, IntPtr.Zero, workDir, ref si, out var pi))
             {
@@ -528,7 +535,7 @@ public sealed class HostService
         {
             var escapedExe = fullExePath.Replace("'", "''");
             var escapedDir = workDir.Replace("'", "''");
-            var psCmd = $"Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{{CommandLine='\"{escapedExe}\"'; CurrentDirectory='{escapedDir}'}} | Out-Null";
+            var psCmd = $"Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{{CommandLine='\"{escapedExe}\"{argsSuffix}'; CurrentDirectory='{escapedDir}'}} | Out-Null";
             var psi = new ProcessStartInfo
             {
                 FileName = "powershell.exe",
@@ -552,6 +559,7 @@ public sealed class HostService
             Process.Start(new ProcessStartInfo
             {
                 FileName = fullExePath,
+                Arguments = extraArgs ?? string.Empty,
                 UseShellExecute = true,
                 WorkingDirectory = workDir
             });

@@ -27,6 +27,7 @@ public partial class MainWindow : Window
     private long _ipcLastPosition;
     private bool _isInitialized;
     private bool _isWebLoaded;
+    private bool _isCompactMode;
 
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
@@ -43,6 +44,17 @@ public partial class MainWindow : Window
         _historyFilePath = Path.Combine(appData, "downloads_history.json");
         _ipcEventsFilePath = Path.Combine(appData, "extension_events.jsonl");
 
+        var cmdArgs = Environment.GetCommandLineArgs();
+        if (cmdArgs.Any(a => string.Equals(a, "--popup", StringComparison.OrdinalIgnoreCase)))
+        {
+            _isCompactMode = true;
+            MinWidth = 480;
+            MinHeight = 440;
+            Width = 540;
+            Height = 530;
+            Title = "WDM — Quick Download";
+        }
+
         // Start tailing from the recent 16KB so if WDM.UI was just launched by the browser extension,
         // it immediately catches the media_download_started event written milliseconds earlier.
         // Stale events (>15s old or missing timestamps) are filtered out in StartExtensionIpcTailer.
@@ -57,6 +69,44 @@ public partial class MainWindow : Window
         }
 
         Loaded += OnWindowLoaded;
+    }
+
+    private void SetCompactPopupMode(bool compact)
+    {
+        try
+        {
+            _isCompactMode = compact;
+            if (WindowState == WindowState.Minimized || WindowState == WindowState.Maximized)
+            {
+                WindowState = WindowState.Normal;
+            }
+
+            var workArea = SystemParameters.WorkArea;
+            if (compact)
+            {
+                MinWidth = 480;
+                MinHeight = 440;
+                Width = 540;
+                Height = 530;
+                Title = "WDM — Quick Download";
+                Left = workArea.Left + (workArea.Width - Width) / 2;
+                Top = workArea.Top + (workArea.Height - Height) / 2;
+            }
+            else
+            {
+                Width = 1160;
+                Height = 720;
+                MinWidth = 880;
+                MinHeight = 580;
+                Title = "WDM — Download Manager";
+                Left = Math.Max(workArea.Left, workArea.Left + (workArea.Width - Width) / 2);
+                Top = Math.Max(workArea.Top, workArea.Top + (workArea.Height - Height) / 2);
+            }
+
+            BringToFront();
+            PostToWeb(new { action = "window_mode_changed", compact });
+        }
+        catch { }
     }
 
     private void BringToFront()
@@ -151,6 +201,11 @@ public partial class MainWindow : Window
                 if (_isWebLoaded) return;
                 _isWebLoaded = true;
 
+                if (_isCompactMode)
+                {
+                    PostToWeb(new { action = "window_mode_changed", compact = true });
+                }
+
                 // Handle command-line URL if WDM.UI was launched with a URL argument
                 var args = Environment.GetCommandLineArgs();
                 if (args.Length > 1 && !string.IsNullOrWhiteSpace(args[1]) &&
@@ -224,7 +279,7 @@ public partial class MainWindow : Window
 
                         if (action == "bring_to_front")
                         {
-                            BringToFront();
+                            SetCompactPopupMode(false);
                             if (root.TryGetProperty("url", out var uProp) && uProp.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(uProp.GetString()))
                             {
                                 PostToWeb(new { action = "open_url", url = uProp.GetString() });
@@ -234,27 +289,15 @@ public partial class MainWindow : Window
                                 PostToWeb(new { action = "switch_tab", tab = "downloads" });
                             }
                         }
-                        else if (action == "ipc_start_download")
+                        else if (action == "ipc_start_download" || action == "ipc_download_media")
                         {
                             var dlId = root.TryGetProperty("downloadId", out var idProp) ? idProp.GetString() : null;
                             if (!string.IsNullOrWhiteSpace(dlId) && !_processedIpcDownloadIds.Add(dlId))
                             {
                                 continue;
                             }
-                            BringToFront();
-                            var cloned = root.Clone();
-                            _ = HandleStartDownloadAsync(cloned, null);
-                        }
-                        else if (action == "ipc_download_media")
-                        {
-                            var dlId = root.TryGetProperty("downloadId", out var idProp) ? idProp.GetString() : null;
-                            if (!string.IsNullOrWhiteSpace(dlId) && !_processedIpcDownloadIds.Add(dlId))
-                            {
-                                continue;
-                            }
-                            BringToFront();
-                            var cloned = root.Clone();
-                            _ = HandleDownloadMediaAsync(cloned, null);
+                            SetCompactPopupMode(true);
+                            WebView?.CoreWebView2?.PostWebMessageAsJson(line);
                         }
                         else if (action == "cancel_download" || action == "pause_download")
                         {
@@ -400,6 +443,25 @@ public partial class MainWindow : Window
 
                 case "sync_local_repo":
                     await HandleSyncLocalRepoAsync(root, requestId);
+                    break;
+
+                case "set_window_mode":
+                    var compact = root.TryGetProperty("compact", out var cpProp) && cpProp.GetBoolean();
+                    Dispatcher.Invoke(() => SetCompactPopupMode(compact));
+                    break;
+
+                case "close_window":
+                    Dispatcher.Invoke(() =>
+                    {
+                        if (_activeEngines.IsEmpty && _activeMediaDownloads.IsEmpty)
+                        {
+                            Close();
+                        }
+                        else
+                        {
+                            WindowState = WindowState.Minimized;
+                        }
+                    });
                     break;
             }
         }
@@ -831,6 +893,8 @@ public partial class MainWindow : Window
         var fileName = root.TryGetProperty("fileName", out var fnProp) ? fnProp.GetString() : null;
         var destinationDirectory = root.TryGetProperty("destinationDirectory", out var dProp) ? dProp.GetString() : null;
         var isAudioOnly = root.TryGetProperty("isAudioOnly", out var aoProp) && aoProp.GetBoolean();
+        var expectedHash = root.TryGetProperty("expectedHash", out var ehProp) ? ehProp.GetString()?.Trim() : null;
+        var hashAlgorithm = root.TryGetProperty("hashAlgorithm", out var haProp) ? haProp.GetString()?.Trim() : null;
         var downloadId = (root.TryGetProperty("downloadId", out var idProp) ? idProp.GetString() : null) ?? Guid.NewGuid().ToString("N");
         var cts = new CancellationTokenSource();
         _activeMediaDownloads[downloadId] = cts;
@@ -869,11 +933,54 @@ public partial class MainWindow : Window
                     },
                     cancellationToken: cts.Token);
 
+                string? sha256 = null, md5 = null, sha1 = null, hashMatchError = null;
+                bool? hashMatched = null;
+                long? finalFileSizeBytes = null;
+
+                if (!string.IsNullOrWhiteSpace(completedPath) && File.Exists(completedPath))
+                {
+                    try
+                    {
+                        finalFileSizeBytes = new FileInfo(completedPath).Length;
+                        var allHashes = await ChecksumVerifier.ComputeAllHashesAsync(completedPath, cts.Token);
+                        sha256 = allHashes[HashAlgorithmType.Sha256];
+                        md5 = allHashes[HashAlgorithmType.Md5];
+                        sha1 = allHashes[HashAlgorithmType.Sha1];
+
+                        if (!string.IsNullOrWhiteSpace(expectedHash))
+                        {
+                            var algo = !string.IsNullOrWhiteSpace(hashAlgorithm)
+                                ? ChecksumVerifier.ParseAlgorithm(hashAlgorithm)
+                                : ChecksumVerifier.InferAlgorithmFromHash(expectedHash);
+
+                            var actualForAlgo = algo switch
+                            {
+                                HashAlgorithmType.Md5 => md5,
+                                HashAlgorithmType.Sha1 => sha1,
+                                _ => sha256
+                            };
+
+                            hashMatched = string.Equals(actualForAlgo, expectedHash, StringComparison.OrdinalIgnoreCase);
+                            if (hashMatched == false)
+                            {
+                                hashMatchError = $"Checksum mismatch! Expected {algo}: {expectedHash}, got {actualForAlgo}.";
+                            }
+                        }
+                    }
+                    catch { }
+                }
+
                 PostToWeb(new
                 {
                     action = "media_download_completed",
                     downloadId,
                     filePath = completedPath,
+                    fileSizeBytes = finalFileSizeBytes,
+                    sha256,
+                    md5,
+                    sha1,
+                    hashMatched,
+                    hashMatchError,
                     destinationDirectory = Directory.Exists(completedPath) ? completedPath : (Path.GetDirectoryName(completedPath) ?? destinationDirectory)
                 });
             }

@@ -376,6 +376,7 @@
           task.activeConnections = msg.activeConnections;
           task.chunks = msg.chunks || [];
           updateTaskCard(task);
+          updateCompactPopupProgress(task);
         }
         break;
 
@@ -400,6 +401,7 @@
           }
 
           renderDownloads();
+          transitionCompactPopupToComplete(task);
         }
         break;
 
@@ -411,6 +413,7 @@
           task.speedBytes = 0;
           task.error = msg.error;
           renderDownloads();
+          updateCompactPopupFailed(task);
         }
         break;
 
@@ -422,6 +425,7 @@
           task.speed = 'Stopped';
           task.speedBytes = 0;
           renderDownloads();
+          updateCompactPopupFailed(task);
         }
         break;
 
@@ -535,6 +539,7 @@
           }
 
           updateTaskCard(task);
+          updateCompactPopupProgress(task);
         }
         break;
 
@@ -546,6 +551,10 @@
           task.speed = 'Completed';
           task.speedBytes = 0;
           task.eta = 'Done';
+          if (msg.fileSizeBytes && msg.fileSizeBytes > 0) {
+            task.totalBytes = msg.fileSizeBytes;
+            task.total = formatBytes(msg.fileSizeBytes);
+          }
           if (task.total && task.total !== 'Probing...' && task.total !== 'Media Stream') {
             task.downloaded = task.total;
           }
@@ -554,7 +563,13 @@
           }
           task.filePath = msg.filePath || msg.destinationDirectory;
           task.destinationDirectory = msg.destinationDirectory;
+          task.sha256 = msg.sha256;
+          task.md5 = msg.md5;
+          task.sha1 = msg.sha1;
+          task.hashMatched = msg.hashMatched;
+          task.hashMatchError = msg.hashMatchError;
           renderDownloads();
+          transitionCompactPopupToComplete(task);
         }
         break;
 
@@ -566,23 +581,39 @@
           task.speedBytes = 0;
           task.error = msg.error;
           renderDownloads();
+          updateCompactPopupFailed(task);
         }
         break;
 
       case 'browse_folder_result':
         if (msg.success && msg.folderPath) {
           mediaModalSavePath.value = msg.folderPath;
+          const popupSaveInput = document.getElementById('popupSavePath');
+          if (popupSaveInput) popupSaveInput.value = msg.folderPath;
         }
         break;
 
       case 'default_folder_result':
         if (msg.folderPath) {
           defaultDownloadDirectory = msg.folderPath;
+          const remembered = localStorage.getItem('wdm_last_save_location');
           if (!mediaModalSavePath.value) {
-            const remembered = localStorage.getItem('wdm_last_save_location');
             mediaModalSavePath.value = remembered || defaultDownloadDirectory;
           }
+          const popupSaveInput = document.getElementById('popupSavePath');
+          if (popupSaveInput && !popupSaveInput.value) {
+            popupSaveInput.value = remembered || defaultDownloadDirectory;
+          }
         }
+        break;
+
+      case 'window_mode_changed':
+        document.body.classList.toggle('compact-mode', !!msg.compact);
+        break;
+
+      case 'ipc_start_download':
+      case 'ipc_download_media':
+        openCompactPopupPrompt(msg);
         break;
 
       case 'clipboard_result':
@@ -1658,6 +1689,484 @@
           currentVerifyTask.hashMatched = false;
           renderDownloads();
         }
+      }
+    });
+  }
+
+  // =========================================================
+  // IDM-STYLE COMPACT POPUP WINDOW CONTROLLER
+  // =========================================================
+  const popupHeaderTitle = document.getElementById('popupHeaderTitle');
+  const popupSubTitle = document.getElementById('popupSubTitle');
+  const popupStatusBadge = document.getElementById('popupStatusBadge');
+  const popupStageConfig = document.getElementById('popupStageConfig');
+  const popupStageProgress = document.getElementById('popupStageProgress');
+  const popupStageComplete = document.getElementById('popupStageComplete');
+
+  const popupFormatBadge = document.getElementById('popupFormatBadge');
+  const popupFileSize = document.getElementById('popupFileSize');
+  const popupSourceUrl = document.getElementById('popupSourceUrl');
+  const popupFileName = document.getElementById('popupFileName');
+  const popupSavePath = document.getElementById('popupSavePath');
+  const btnPopupBrowse = document.getElementById('btnPopupBrowse');
+  const chkPopupRememberPath = document.getElementById('chkPopupRememberPath');
+
+  const btnPopupToggleExtras = document.getElementById('btnPopupToggleExtras');
+  const popupExtrasDrawer = document.getElementById('popupExtrasDrawer');
+  const popupExtrasChevron = document.getElementById('popupExtrasChevron');
+  const popupHttpStreamsRow = document.getElementById('popupHttpStreamsRow');
+  const popupConnectionsSelect = document.getElementById('popupConnectionsSelect');
+  const popupSpeedLimitSelect = document.getElementById('popupSpeedLimitSelect');
+  const popupExpectedHash = document.getElementById('popupExpectedHash');
+  const popupHashAlgoSelect = document.getElementById('popupHashAlgoSelect');
+  const chkPopupAutoOpen = document.getElementById('chkPopupAutoOpen');
+  const chkPopupAutoClose = document.getElementById('chkPopupAutoClose');
+
+  const btnPopupCancelConfig = document.getElementById('btnPopupCancelConfig');
+  const btnPopupStartNow = document.getElementById('btnPopupStartNow');
+
+  const popupLiveFileName = document.getElementById('popupLiveFileName');
+  const popupLiveBadge = document.getElementById('popupLiveBadge');
+  const popupLiveSavePath = document.getElementById('popupLiveSavePath');
+  const popupLiveStatus = document.getElementById('popupLiveStatus');
+  const popupLivePercent = document.getElementById('popupLivePercent');
+  const popupLiveProgressBar = document.getElementById('popupLiveProgressBar');
+  const popupLiveSpeed = document.getElementById('popupLiveSpeed');
+  const popupLiveDownloaded = document.getElementById('popupLiveDownloaded');
+  const popupLiveEta = document.getElementById('popupLiveEta');
+  const popupLiveStreams = document.getElementById('popupLiveStreams');
+  const popupLiveChunks = document.getElementById('popupLiveChunks');
+  const chkPopupAutoOpenLive = document.getElementById('chkPopupAutoOpenLive');
+  const btnPopupStopLive = document.getElementById('btnPopupStopLive');
+  const btnPopupResumeLive = document.getElementById('btnPopupResumeLive');
+
+  const popupDoneBanner = document.getElementById('popupDoneBanner');
+  const popupDoneHeading = document.getElementById('popupDoneHeading');
+  const popupDoneSubtext = document.getElementById('popupDoneSubtext');
+  const popupDoneIntegrityBadge = document.getElementById('popupDoneIntegrityBadge');
+  const popupDoneFileName = document.getElementById('popupDoneFileName');
+  const popupDoneSize = document.getElementById('popupDoneSize');
+  const popupDonePath = document.getElementById('popupDonePath');
+  const popupDoneHashRow = document.getElementById('popupDoneHashRow');
+  const popupDoneSha256 = document.getElementById('popupDoneSha256');
+  const btnPopupCopySha256 = document.getElementById('btnPopupCopySha256');
+  const btnPopupOpenFile = document.getElementById('btnPopupOpenFile');
+  const btnPopupOpenFolder = document.getElementById('btnPopupOpenFolder');
+  const btnPopupVerifyHash = document.getElementById('btnPopupVerifyHash');
+  const btnPopupCloseDone = document.getElementById('btnPopupCloseDone');
+
+  let activePopupPayload = null;
+  let activePopupDownloadId = null;
+
+  function showPopupStage(stageName) {
+    if (!popupStageConfig || !popupStageProgress || !popupStageComplete) return;
+    popupStageConfig.style.display = stageName === 'config' ? 'flex' : 'none';
+    popupStageProgress.style.display = stageName === 'progress' ? 'flex' : 'none';
+    popupStageComplete.style.display = stageName === 'complete' ? 'flex' : 'none';
+  }
+
+  function switchToFullMainWdm() {
+    document.body.classList.remove('compact-mode');
+    sendToHost('set_window_mode', { compact: false });
+    const allTab = document.querySelector('.nav-item[data-tab="downloads"]');
+    if (allTab && !allTab.classList.contains('active')) {
+      allTab.click();
+    }
+    renderDownloads();
+  }
+
+  ['btnPopupOpenMainTop', 'btnPopupOpenMainConfig', 'btnPopupOpenMainLive', 'btnPopupOpenMainDone'].forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) {
+      btn.addEventListener('click', () => switchToFullMainWdm());
+    }
+  });
+
+  if (btnPopupToggleExtras && popupExtrasDrawer) {
+    btnPopupToggleExtras.addEventListener('click', () => {
+      const isOpen = popupExtrasDrawer.style.display !== 'none';
+      popupExtrasDrawer.style.display = isOpen ? 'none' : 'block';
+      if (popupExtrasChevron) {
+        popupExtrasChevron.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(180deg)';
+      }
+    });
+  }
+
+  if (btnPopupBrowse) {
+    btnPopupBrowse.addEventListener('click', () => {
+      sendToHost('browse_folder');
+    });
+  }
+
+  if (btnPopupCancelConfig) {
+    btnPopupCancelConfig.addEventListener('click', () => {
+      sendToHost('close_window');
+    });
+  }
+
+  if (btnPopupCloseDone) {
+    btnPopupCloseDone.addEventListener('click', () => {
+      sendToHost('close_window');
+    });
+  }
+
+  function openCompactPopupPrompt(msg) {
+    document.body.classList.add('compact-mode');
+    const isMedia = msg.action === 'ipc_download_media';
+    const dlId = msg.downloadId || ('dl_' + Math.random().toString(36).substring(2, 9));
+
+    let cleanName = msg.fileName || '';
+    let initialDir = msg.destinationDirectory || '';
+    if (cleanName && (cleanName.includes('\\') || cleanName.includes('/'))) {
+      const parts = cleanName.split(/[\\/]/);
+      cleanName = parts.pop() || cleanName;
+      if (!initialDir) initialDir = parts.join('\\');
+    }
+    if (!cleanName) {
+      cleanName = isMedia ? ((msg.title || 'Media Video') + '.mp4') : (msg.url.split('/').pop().split('?')[0] || 'download.bin');
+    }
+
+    const rememberedDir = localStorage.getItem('wdm_last_save_location');
+    const targetDir = initialDir || rememberedDir || defaultDownloadDirectory || '';
+
+    activePopupPayload = {
+      isMedia,
+      downloadId: dlId,
+      url: msg.url,
+      title: msg.title || cleanName.replace(/\.[^/.]+$/, ''),
+      fileName: cleanName,
+      formatId: msg.formatId || null,
+      isAudioOnly: !!msg.isAudioOnly,
+      resolution: msg.resolution || null,
+      extension: msg.extension || (cleanName.includes('.') ? cleanName.split('.').pop() : null),
+      fileSizeBytes: msg.fileSizeBytes || null,
+      connections: msg.connections || 16,
+      headers: msg.headers || null,
+      destinationDirectory: targetDir
+    };
+    activePopupDownloadId = dlId;
+
+    if (popupHeaderTitle) popupHeaderTitle.textContent = 'Download File Info';
+    if (popupSubTitle) popupSubTitle.textContent = isMedia ? 'Confirm media stream and save folder' : 'Confirm file details and save folder';
+    if (popupStatusBadge) {
+      popupStatusBadge.textContent = 'Ready';
+      popupStatusBadge.className = 'status-pill blue';
+    }
+
+    const extLabel = (activePopupPayload.extension || (isMedia ? 'MP4' : 'FILE')).toUpperCase();
+    const badgeLabel = isMedia
+      ? (activePopupPayload.isAudioOnly ? `AUDIO • ${extLabel}` : `${activePopupPayload.resolution || 'Video'} • ${extLabel}`)
+      : `HTTP • ${extLabel}`;
+
+    if (popupFormatBadge) popupFormatBadge.textContent = badgeLabel;
+    if (popupFileSize) {
+      popupFileSize.textContent = activePopupPayload.fileSizeBytes && activePopupPayload.fileSizeBytes > 0
+        ? formatBytes(activePopupPayload.fileSizeBytes)
+        : (isMedia ? 'Dynamic Stream' : 'Probing...');
+    }
+    if (popupSourceUrl) {
+      popupSourceUrl.textContent = msg.url;
+      popupSourceUrl.title = msg.url;
+    }
+    if (popupFileName) popupFileName.value = cleanName;
+    if (popupSavePath) popupSavePath.value = targetDir;
+    if (popupExpectedHash) popupExpectedHash.value = '';
+    if (popupHttpStreamsRow) {
+      popupHttpStreamsRow.style.display = isMedia ? 'none' : 'grid';
+    }
+    if (popupConnectionsSelect && msg.connections) {
+      popupConnectionsSelect.value = String(msg.connections);
+    }
+
+    showPopupStage('config');
+
+    // If regular HTTP file without known size, probe metadata in background
+    if (!isMedia && msg.url) {
+      sendToHost('probe_url', { url: msg.url }).then(res => {
+        if (!activePopupPayload || activePopupPayload.downloadId !== dlId) return;
+        if (res && res.success && res.data) {
+          if (res.data.totalBytes && res.data.totalBytes > 0) {
+            activePopupPayload.fileSizeBytes = res.data.totalBytes;
+            if (popupFileSize) popupFileSize.textContent = formatBytes(res.data.totalBytes);
+          } else if (popupFileSize) {
+            popupFileSize.textContent = 'Unknown / Stream';
+          }
+          if (res.data.fileName && (!popupFileName.value || popupFileName.value === 'download.bin')) {
+            popupFileName.value = res.data.fileName;
+          }
+          if (popupFormatBadge) {
+            popupFormatBadge.textContent = res.data.acceptsRanges ? `Multi-Stream • ${extLabel}` : `Single Stream • ${extLabel}`;
+          }
+        } else if (popupFileSize && popupFileSize.textContent === 'Probing...') {
+          popupFileSize.textContent = 'Ready';
+        }
+      });
+    }
+  }
+
+  if (btnPopupStartNow) {
+    btnPopupStartNow.addEventListener('click', () => {
+      if (!activePopupPayload) return;
+
+      const finalFileName = (popupFileName && popupFileName.value.trim()) || activePopupPayload.fileName;
+      const finalSaveDir = (popupSavePath && popupSavePath.value.trim()) || activePopupPayload.destinationDirectory || defaultDownloadDirectory;
+      const expectedHash = popupExpectedHash ? popupExpectedHash.value.trim() : '';
+      const hashAlgo = popupHashAlgoSelect ? popupHashAlgoSelect.value : 'auto';
+      const connections = popupConnectionsSelect ? parseInt(popupConnectionsSelect.value, 10) : 16;
+      const speedLimit = popupSpeedLimitSelect ? parseInt(popupSpeedLimitSelect.value, 10) : 0;
+
+      if (chkPopupRememberPath && chkPopupRememberPath.checked && finalSaveDir) {
+        localStorage.setItem('wdm_last_save_location', finalSaveDir);
+      }
+      if (chkPopupAutoOpenLive && chkPopupAutoOpen) {
+        chkPopupAutoOpenLive.checked = chkPopupAutoOpen.checked;
+      }
+
+      activePopupPayload.fileName = finalFileName;
+      activePopupPayload.destinationDirectory = finalSaveDir;
+      activePopupPayload.connections = connections;
+      activePopupPayload.speedLimit = speedLimit;
+      activePopupPayload.expectedHash = expectedHash || null;
+      activePopupPayload.hashAlgorithm = (expectedHash && hashAlgo !== 'auto') ? hashAlgo : null;
+
+      // Transition to Stage 2: Live Progress
+      if (popupHeaderTitle) popupHeaderTitle.textContent = 'Downloading...';
+      if (popupSubTitle) popupSubTitle.textContent = finalFileName;
+      if (popupStatusBadge) {
+        popupStatusBadge.textContent = 'Active';
+        popupStatusBadge.className = 'status-pill blue';
+      }
+      if (popupLiveFileName) popupLiveFileName.textContent = finalFileName;
+      if (popupLiveBadge && popupFormatBadge) popupLiveBadge.textContent = popupFormatBadge.textContent;
+      if (popupLiveSavePath) popupLiveSavePath.textContent = finalSaveDir || 'Downloads';
+      if (popupLiveStatus) popupLiveStatus.textContent = activePopupPayload.isMedia ? 'Extracting & merging stream...' : 'Accelerating via parallel connections...';
+      if (popupLivePercent) popupLivePercent.textContent = '0%';
+      if (popupLiveProgressBar) popupLiveProgressBar.style.width = '0%';
+      if (popupLiveSpeed) popupLiveSpeed.textContent = 'Starting...';
+      if (popupLiveDownloaded) {
+        const totalStr = activePopupPayload.fileSizeBytes ? formatBytes(activePopupPayload.fileSizeBytes) : '--';
+        popupLiveDownloaded.textContent = `0 B / ${totalStr}`;
+      }
+      if (popupLiveEta) popupLiveEta.textContent = '--:--';
+      if (popupLiveStreams) {
+        popupLiveStreams.textContent = activePopupPayload.isMedia
+          ? (activePopupPayload.isAudioOnly ? '1 Audio' : 'Video+Audio')
+          : `${connections} Streams`;
+      }
+      if (btnPopupStopLive) btnPopupStopLive.style.display = 'inline-flex';
+      if (btnPopupResumeLive) btnPopupResumeLive.style.display = 'none';
+
+      showPopupStage('progress');
+
+      if (activePopupPayload.isMedia) {
+        sendToHost('download_media', {
+          downloadId: activePopupPayload.downloadId,
+          url: activePopupPayload.url,
+          formatId: activePopupPayload.formatId,
+          title: activePopupPayload.title,
+          fileName: finalFileName,
+          destinationDirectory: finalSaveDir,
+          isAudioOnly: activePopupPayload.isAudioOnly,
+          expectedHash: activePopupPayload.expectedHash,
+          hashAlgorithm: activePopupPayload.hashAlgorithm
+        });
+      } else {
+        sendToHost('start_download', {
+          downloadId: activePopupPayload.downloadId,
+          url: activePopupPayload.url,
+          fileName: finalFileName,
+          destinationDirectory: finalSaveDir,
+          connections: connections,
+          speedLimit: speedLimit,
+          headers: activePopupPayload.headers,
+          expectedHash: activePopupPayload.expectedHash,
+          hashAlgorithm: activePopupPayload.hashAlgorithm
+        });
+      }
+    });
+  }
+
+  function updateCompactPopupProgress(task) {
+    if (!task || task.id !== activePopupDownloadId) return;
+
+    const pct = Math.max(0, Math.min(100, Math.round(task.percentage || 0)));
+    if (popupLivePercent) popupLivePercent.textContent = `${pct}%`;
+    if (popupLiveProgressBar) popupLiveProgressBar.style.width = `${pct}%`;
+    if (popupLiveSpeed) popupLiveSpeed.textContent = task.speed || '0 B/s';
+    if (popupLiveDownloaded) popupLiveDownloaded.textContent = `${task.downloaded || '0 B'} / ${task.total || '--'}`;
+    if (popupLiveEta) popupLiveEta.textContent = task.eta || '--:--';
+    if (popupLiveStreams) {
+      popupLiveStreams.textContent = task.isMedia
+        ? (task.isAudioOnly ? 'Audio Stream' : 'Video + Audio')
+        : `${task.activeConnections || (task.chunks ? task.chunks.length : 1)} Active`;
+    }
+    if (popupLiveStatus) {
+      popupLiveStatus.textContent = task.isMedia ? 'Downloading & muxing stream...' : 'Downloading at accelerated speed...';
+    }
+
+    if (popupLiveChunks && task.chunks && task.chunks.length > 0) {
+      popupLiveChunks.innerHTML = '';
+      task.chunks.forEach(c => {
+        const cell = document.createElement('div');
+        cell.className = 'chunk-cell';
+        const cPct = Math.round(c.progress || 0);
+        cell.innerHTML = `
+          <div class="chunk-label">#${(c.index ?? 0) + 1}</div>
+          <div class="chunk-mini-bar"><div class="chunk-mini-fill" style="width:${cPct}%"></div></div>
+        `;
+        popupLiveChunks.appendChild(cell);
+      });
+    }
+  }
+
+  function updateCompactPopupFailed(task) {
+    if (!task || task.id !== activePopupDownloadId) return;
+    if (popupStatusBadge) {
+      popupStatusBadge.textContent = task.status || 'Stopped';
+      popupStatusBadge.className = 'status-pill';
+      popupStatusBadge.style.background = 'rgba(255, 69, 58, 0.2)';
+      popupStatusBadge.style.color = '#ff6961';
+    }
+    if (popupLiveStatus) {
+      popupLiveStatus.textContent = task.error || 'Download paused or stopped.';
+      popupLiveStatus.style.color = '#ff6961';
+    }
+    if (btnPopupStopLive) btnPopupStopLive.style.display = 'none';
+    if (btnPopupResumeLive) btnPopupResumeLive.style.display = 'inline-flex';
+  }
+
+  if (btnPopupStopLive) {
+    btnPopupStopLive.addEventListener('click', () => {
+      if (!activePopupDownloadId) return;
+      sendToHost('pause_download', { downloadId: activePopupDownloadId });
+      if (downloads.has(activePopupDownloadId)) {
+        const t = downloads.get(activePopupDownloadId);
+        t.status = 'Paused';
+        t.speed = 'Paused';
+        updateCompactPopupFailed(t);
+        renderDownloads();
+      }
+    });
+  }
+
+  if (btnPopupResumeLive) {
+    btnPopupResumeLive.addEventListener('click', () => {
+      if (!activePopupPayload) return;
+      if (popupLiveStatus) popupLiveStatus.style.color = 'var(--label-secondary)';
+      btnPopupStartNow.click();
+    });
+  }
+
+  function transitionCompactPopupToComplete(task) {
+    if (!task || task.id !== activePopupDownloadId) return;
+
+    if (popupHeaderTitle) popupHeaderTitle.textContent = 'Download Complete';
+    if (popupSubTitle) popupSubTitle.textContent = 'File saved and verified on disk';
+    if (popupStatusBadge) {
+      popupStatusBadge.textContent = 'Completed';
+      popupStatusBadge.className = 'status-pill green';
+      popupStatusBadge.style.background = '';
+      popupStatusBadge.style.color = '';
+    }
+
+    if (popupDoneFileName) popupDoneFileName.textContent = task.fileName || 'Downloaded File';
+    if (popupDoneSize) {
+      popupDoneSize.textContent = (task.total && task.total !== 'Probing...')
+        ? task.total
+        : (activePopupPayload?.fileSizeBytes ? formatBytes(activePopupPayload.fileSizeBytes) : 'Completed');
+    }
+    if (popupDonePath) {
+      popupDonePath.textContent = task.filePath || task.destinationDirectory || defaultDownloadDirectory;
+    }
+
+    if (popupDoneSha256 && popupDoneHashRow) {
+      if (task.sha256) {
+        popupDoneHashRow.style.display = 'flex';
+        popupDoneSha256.textContent = task.sha256;
+      } else {
+        popupDoneHashRow.style.display = 'none';
+      }
+    }
+
+    if (popupDoneBanner && popupDoneHeading && popupDoneSubtext && popupDoneIntegrityBadge) {
+      if (task.hashMatched === false) {
+        popupDoneBanner.style.background = 'rgba(255, 69, 58, 0.12)';
+        popupDoneBanner.style.borderColor = 'rgba(255, 69, 58, 0.4)';
+        popupDoneHeading.style.color = '#ff6961';
+        popupDoneHeading.textContent = 'Checksum Mismatch Warning';
+        popupDoneSubtext.textContent = task.hashMatchError || 'Downloaded file hash did not match expected checksum.';
+        popupDoneIntegrityBadge.textContent = '⚠️ Mismatch';
+        popupDoneIntegrityBadge.className = 'status-pill';
+        popupDoneIntegrityBadge.style.background = 'rgba(255, 69, 58, 0.2)';
+        popupDoneIntegrityBadge.style.color = '#ff6961';
+      } else if (task.hashMatched === true) {
+        popupDoneBanner.style.background = 'rgba(48, 209, 88, 0.1)';
+        popupDoneBanner.style.borderColor = 'rgba(48, 209, 88, 0.3)';
+        popupDoneHeading.style.color = '#30d158';
+        popupDoneHeading.textContent = 'Download Complete & Verified';
+        popupDoneSubtext.textContent = 'Cryptographic checksum matched expected hash.';
+        popupDoneIntegrityBadge.textContent = '✓ Verified';
+        popupDoneIntegrityBadge.className = 'status-pill green';
+      } else {
+        popupDoneBanner.style.background = 'rgba(48, 209, 88, 0.1)';
+        popupDoneBanner.style.borderColor = 'rgba(48, 209, 88, 0.3)';
+        popupDoneHeading.style.color = '#30d158';
+        popupDoneHeading.textContent = 'Download Complete';
+        popupDoneSubtext.textContent = task.sha256 ? 'SHA-256 integrity hash computed.' : 'File saved to disk.';
+        popupDoneIntegrityBadge.textContent = '✓ Intact';
+        popupDoneIntegrityBadge.className = 'status-pill green';
+      }
+    }
+
+    showPopupStage('complete');
+
+    // Execute user-requested auto-actions
+    const shouldAutoOpen = (chkPopupAutoOpenLive && chkPopupAutoOpenLive.checked) || (chkPopupAutoOpen && chkPopupAutoOpen.checked);
+    if (shouldAutoOpen) {
+      const target = task.filePath || task.destinationDirectory;
+      if (target) sendToHost('open_file', { filePath: target });
+    }
+
+    if (chkPopupAutoClose && chkPopupAutoClose.checked) {
+      setTimeout(() => {
+        sendToHost('close_window');
+      }, 900);
+    }
+  }
+
+  if (btnPopupOpenFile) {
+    btnPopupOpenFile.addEventListener('click', () => {
+      const task = activePopupDownloadId ? downloads.get(activePopupDownloadId) : null;
+      const target = task?.filePath || task?.destinationDirectory || activePopupPayload?.destinationDirectory;
+      if (target) sendToHost('open_file', { filePath: target });
+    });
+  }
+
+  if (btnPopupOpenFolder) {
+    btnPopupOpenFolder.addEventListener('click', () => {
+      const task = activePopupDownloadId ? downloads.get(activePopupDownloadId) : null;
+      const target = task?.filePath || task?.destinationDirectory || activePopupPayload?.destinationDirectory;
+      if (target) sendToHost('open_folder', { filePath: target });
+    });
+  }
+
+  if (btnPopupVerifyHash) {
+    btnPopupVerifyHash.addEventListener('click', () => {
+      const task = activePopupDownloadId ? downloads.get(activePopupDownloadId) : null;
+      if (task) {
+        openVerifyModal(task);
+      }
+    });
+  }
+
+  if (btnPopupCopySha256) {
+    btnPopupCopySha256.addEventListener('click', async () => {
+      const sha = popupDoneSha256 ? popupDoneSha256.textContent.trim() : '';
+      if (sha && sha !== '--') {
+        try {
+          await navigator.clipboard.writeText(sha);
+          showToast('Copied SHA-256 checksum to clipboard!');
+        } catch { }
       }
     });
   }

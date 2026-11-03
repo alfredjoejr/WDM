@@ -457,40 +457,40 @@
     item.addEventListener('click', (e) => {
       e.stopPropagation();
       if (activeHooker) activeHooker.classList.remove('open');
-      startDownload(f.formatId, f.isAudioOnly, videoTitle, f.extension);
+      startDownload(f.formatId, f.isAudioOnly, videoTitle, f.extension, f.resolution, f.fileSizeBytes);
     });
 
     return item;
   }
 
-  function startDownload(formatId = null, isAudio = false, title = null, ext = null) {
+  function startDownload(formatId = null, isAudio = false, title = null, ext = null, resolution = null, fileSizeBytes = null) {
     const pageUrl = window.location.href;
     const safeTitle = (title || document.title || 'Video').replace(/[/\\?%*:|"<>]/g, '_').trim();
     const finalExt = ext || (isAudio ? 'mp3' : 'mp4');
     const fileName = `${safeTitle}.${finalExt}`;
 
-    showToast(`✓ Starting high-speed download: ${fileName}`);
+    showToast(`✓ Opening WDM Quick Download for: ${fileName}`);
 
     if (activeHooker) {
       const label = activeHooker.querySelector('.wdm-hooker-label');
-      if (label) label.textContent = 'Connecting to WDM...';
+      if (label) {
+        label.textContent = 'Opening WDM Popup...';
+        setTimeout(() => {
+          if (label) label.textContent = 'Download with WDM';
+        }, 2500);
+      }
     }
 
     sendExtensionMessage({
       action: "download_media",
       url: pageUrl,
       formatId: formatId,
+      title: safeTitle,
       fileName: fileName,
-      isAudioOnly: isAudio
-    }).then((res) => {
-      if (res && (res.action === 'media_download_started' || res.downloadId)) {
-        showToast(`✓ WDM is downloading at accelerated speed!`);
-      }
-    });
-
-    // Automatically open WDM Dashboard to All Downloads view so the user sees live progress & controls
-    sendExtensionMessage({
-      action: "open_app"
+      isAudioOnly: isAudio,
+      resolution: resolution || (isAudio ? 'Audio Stream' : 'Best Video'),
+      extension: finalExt,
+      fileSizeBytes: fileSizeBytes || null
     });
   }
 

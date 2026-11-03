@@ -346,8 +346,12 @@ chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
       action: "download_media",
       url: req.url,
       formatId: req.formatId,
+      title: req.title,
       fileName: req.fileName,
-      isAudioOnly: req.isAudioOnly || false
+      isAudioOnly: req.isAudioOnly || false,
+      resolution: req.resolution || null,
+      extension: req.extension || null,
+      fileSizeBytes: req.fileSizeBytes || null
     })
       .then(res => sendResponse(res))
       .catch(err => sendResponse({ success: false, message: err.message }));

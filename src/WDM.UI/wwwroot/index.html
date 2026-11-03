@@ -657,6 +657,257 @@
     </div>
   </div>
 
+  <!-- IDM-Style Compact Popup Window View -->
+  <div id="idmPopupPanel" class="idm-popup-panel" style="display: none;">
+    <!-- Top Header -->
+    <div class="idm-popup-header">
+      <div class="idm-popup-brand">
+        <img src="assets/logo.png" alt="WDM" class="idm-popup-logo" onerror="this.style.display='none'">
+        <div>
+          <h3 id="popupHeaderTitle">Download File Info</h3>
+          <span id="popupSubTitle" class="idm-popup-sub">Confirm details and destination</span>
+        </div>
+      </div>
+      <div class="idm-popup-header-right">
+        <span id="popupStatusBadge" class="status-pill blue">Ready</span>
+        <button type="button" class="apple-btn apple-btn-glass idm-open-main-btn" id="btnPopupOpenMainTop" title="Switch to Full WDM Dashboard">
+          <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:currentColor;"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
+          <span>Open Main WDM</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- STAGE 1: Pre-Download Details & Configuration -->
+    <div id="popupStageConfig" class="idm-popup-stage">
+      <div class="idm-popup-body">
+        <!-- File & Stream Overview Card -->
+        <div class="probe-card glass-panel idm-summary-card">
+          <div class="probe-line">
+            <span class="k">Stream / Type</span>
+            <span id="popupFormatBadge" class="status-pill blue">1080p • MP4</span>
+          </div>
+          <div class="probe-line">
+            <span class="k">File Size</span>
+            <b id="popupFileSize" class="v mono">Probing...</b>
+          </div>
+          <div class="probe-line">
+            <span class="k">Source URL</span>
+            <span id="popupSourceUrl" class="idm-url-truncate mono" title="">https://...</span>
+          </div>
+        </div>
+
+        <!-- Editable File Name -->
+        <div class="field-block">
+          <label class="field-title">File Name</label>
+          <input type="text" id="popupFileName" class="glass-text-field" placeholder="Video_or_File.mp4" spellcheck="false">
+        </div>
+
+        <!-- Where to Download (Save To) -->
+        <div class="field-block">
+          <label class="field-title">Save To Folder</label>
+          <div class="input-with-button">
+            <input type="text" id="popupSavePath" class="glass-text-field" placeholder="C:\Users\...\Downloads" spellcheck="false">
+            <button type="button" class="apple-btn apple-btn-glass" id="btnPopupBrowse" style="white-space: nowrap;">Browse...</button>
+          </div>
+          <label class="apple-checkbox-label" style="margin-top: 6px;">
+            <input type="checkbox" id="chkPopupRememberPath" checked>
+            <span>Remember this folder as default download location</span>
+          </label>
+        </div>
+
+        <!-- Extra Options Toggle & Drawer -->
+        <div class="idm-extras-wrap">
+          <button type="button" class="idm-extras-toggle" id="btnPopupToggleExtras">
+            <span>⚙ Extra Options (Streams, Speed Limit, Checksum & Auto-Actions)</span>
+            <svg id="popupExtrasChevron" viewBox="0 0 24 24" style="width:16px;height:16px;fill:currentColor;transition:transform 0.2s;"><path d="M7 10l5 5 5-5z"/></svg>
+          </button>
+
+          <div id="popupExtrasDrawer" class="idm-extras-drawer" style="display: none;">
+            <div class="idm-extras-grid" id="popupHttpStreamsRow">
+              <div class="field-block">
+                <label class="field-title">Parallel Streams</label>
+                <select id="popupConnectionsSelect" class="glass-text-field idm-native-select">
+                  <option value="8">8 Streams</option>
+                  <option value="16" selected>16 Streams (Recommended)</option>
+                  <option value="32">32 Streams (Max)</option>
+                </select>
+              </div>
+              <div class="field-block">
+                <label class="field-title">Speed Limit</label>
+                <select id="popupSpeedLimitSelect" class="glass-text-field idm-native-select">
+                  <option value="0" selected>Unlimited</option>
+                  <option value="5242880">5 MB/s</option>
+                  <option value="10485760">10 MB/s</option>
+                  <option value="20971520">20 MB/s</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="field-block" style="margin-top: 8px;">
+              <label class="field-title">Expected Checksum (Optional — Auto-verifies on completion)</label>
+              <div class="input-with-button" style="gap: 6px;">
+                <input type="text" id="popupExpectedHash" class="glass-text-field mono" placeholder="Paste SHA-256 / MD5 / SHA-1..." spellcheck="false" style="font-size: 11.5px;">
+                <select id="popupHashAlgoSelect" class="glass-text-field idm-native-select" style="width: 105px; flex-shrink: 0;">
+                  <option value="auto" selected>Auto</option>
+                  <option value="sha256">SHA-256</option>
+                  <option value="md5">MD5</option>
+                  <option value="sha1">SHA-1</option>
+                </select>
+              </div>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 8px;">
+              <label class="apple-checkbox-label">
+                <input type="checkbox" id="chkPopupAutoOpen">
+                <span>Automatically open file when download completes</span>
+              </label>
+              <label class="apple-checkbox-label">
+                <input type="checkbox" id="chkPopupAutoClose">
+                <span>Automatically close popup when download completes</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="idm-popup-footer">
+        <button type="button" class="apple-btn apple-btn-glass" id="btnPopupCancelConfig">Cancel</button>
+        <div style="display: flex; gap: 8px;">
+          <button type="button" class="apple-btn apple-btn-glass" id="btnPopupOpenMainConfig">Open Main WDM</button>
+          <button type="button" class="apple-btn apple-btn-primary" id="btnPopupStartNow">
+            <svg class="btn-svg" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+            <span>Start Download</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- STAGE 2: Active Download Progress -->
+    <div id="popupStageProgress" class="idm-popup-stage" style="display: none;">
+      <div class="idm-popup-body">
+        <div class="probe-card glass-panel idm-summary-card">
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+            <b id="popupLiveFileName" style="font-size: 13.5px; color: var(--label-primary); word-break: break-all;">Downloading...</b>
+            <span id="popupLiveBadge" class="status-pill blue" style="flex-shrink: 0;">MP4</span>
+          </div>
+          <div id="popupLiveSavePath" class="mono" style="font-size: 11px; color: var(--label-tertiary); word-break: break-all; margin-top: 2px;">C:\Users\...\Downloads</div>
+        </div>
+
+        <!-- Progress Bar & Percentage -->
+        <div class="idm-progress-card glass-panel">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <span id="popupLiveStatus" style="font-size: 12px; color: var(--label-secondary);">Connecting to stream...</span>
+            <b id="popupLivePercent" class="mono" style="font-size: 15px; color: #38a5ff;">0%</b>
+          </div>
+          <div class="progress-bar-bg" style="height: 8px; border-radius: 99px; overflow: hidden;">
+            <div id="popupLiveProgressBar" class="progress-bar-fill" style="width: 0%; height: 100%;"></div>
+          </div>
+
+          <!-- 4-Column Live Telemetry Grid -->
+          <div class="idm-telemetry-grid">
+            <div class="idm-stat-box">
+              <span class="k">Transfer Rate</span>
+              <b id="popupLiveSpeed" class="v mono" style="color: #30d158;">0 B/s</b>
+            </div>
+            <div class="idm-stat-box">
+              <span class="k">Downloaded</span>
+              <b id="popupLiveDownloaded" class="v mono">0 B / --</b>
+            </div>
+            <div class="idm-stat-box">
+              <span class="k">Time Left</span>
+              <b id="popupLiveEta" class="v mono">--:--</b>
+            </div>
+            <div class="idm-stat-box">
+              <span class="k">Connections</span>
+              <b id="popupLiveStreams" class="v mono">Active</b>
+            </div>
+          </div>
+
+          <!-- Active Chunks Visualizer -->
+          <div id="popupLiveChunksWrap" style="margin-top: 10px;">
+            <div style="font-size: 10px; font-weight: 600; color: var(--label-tertiary); letter-spacing: 0.05em; margin-bottom: 5px;">ACTIVE STREAM CHUNKS</div>
+            <div id="popupLiveChunks" class="chunks-grid" style="grid-template-columns: repeat(auto-fill, minmax(46px, 1fr)); gap: 4px;"></div>
+          </div>
+        </div>
+
+        <label class="apple-checkbox-label" style="margin-top: 4px;">
+          <input type="checkbox" id="chkPopupAutoOpenLive">
+          <span>Automatically open file when download finishes</span>
+        </label>
+      </div>
+
+      <div class="idm-popup-footer">
+        <div style="display: flex; gap: 8px;">
+          <button type="button" class="apple-btn apple-btn-glass" id="btnPopupStopLive" style="color: #ff6961; border-color: rgba(255,69,58,0.3);">Stop / Pause</button>
+          <button type="button" class="apple-btn apple-btn-primary" id="btnPopupResumeLive" style="display: none;">Resume Download</button>
+        </div>
+        <button type="button" class="apple-btn apple-btn-glass" id="btnPopupOpenMainLive">Open Main WDM</button>
+      </div>
+    </div>
+
+    <!-- STAGE 3: Download Complete & Post-Download Options -->
+    <div id="popupStageComplete" class="idm-popup-stage" style="display: none;">
+      <div class="idm-popup-body">
+        <!-- Success Banner -->
+        <div id="popupDoneBanner" class="idm-done-banner">
+          <div class="idm-done-icon">✓</div>
+          <div style="flex: 1;">
+            <h4 id="popupDoneHeading" style="margin: 0; font-size: 13.5px; color: #30d158;">Download Complete</h4>
+            <p id="popupDoneSubtext" style="margin: 2px 0 0; font-size: 11.5px; color: var(--label-secondary);">File saved and verified on disk.</p>
+          </div>
+          <span id="popupDoneIntegrityBadge" class="status-pill green" style="font-size: 11px;">✓ Intact</span>
+        </div>
+
+        <!-- Saved File Info Card -->
+        <div class="probe-card glass-panel idm-summary-card" style="gap: 8px;">
+          <div class="probe-line">
+            <span class="k">File Name</span>
+            <b id="popupDoneFileName" class="v" style="text-align: right; word-break: break-all; max-width: 310px;">video.mp4</b>
+          </div>
+          <div class="probe-line">
+            <span class="k">Total Size</span>
+            <b id="popupDoneSize" class="v mono">--</b>
+          </div>
+          <div class="probe-line" style="flex-direction: column; align-items: flex-start; gap: 3px;">
+            <span class="k">Saved Location</span>
+            <span id="popupDonePath" class="mono" style="font-size: 11px; color: #38a5ff; word-break: break-all; user-select: all;">C:\Users\...\Downloads</span>
+          </div>
+          <div id="popupDoneHashRow" class="probe-line" style="flex-direction: column; align-items: flex-start; gap: 4px; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 7px;">
+            <div style="display: flex; justify-content: space-between; width: 100%; align-items: center;">
+              <span class="k">SHA-256 Checksum</span>
+              <button type="button" class="apple-btn apple-btn-glass" id="btnPopupCopySha256" style="height: 20px; padding: 0 8px; font-size: 10px;">Copy SHA-256</button>
+            </div>
+            <code id="popupDoneSha256" class="mono" style="font-size: 10.5px; color: var(--label-secondary); word-break: break-all; user-select: all;">--</code>
+          </div>
+        </div>
+
+        <!-- Primary Post-Download Actions Grid (IDM style) -->
+        <div class="idm-after-actions-grid">
+          <button type="button" class="apple-btn apple-btn-primary idm-action-tile" id="btnPopupOpenFile">
+            <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            <span>Open File</span>
+          </button>
+          <button type="button" class="apple-btn apple-btn-glass idm-action-tile" id="btnPopupOpenFolder">
+            <svg viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z"/></svg>
+            <span>Open Folder</span>
+          </button>
+          <button type="button" class="apple-btn apple-btn-glass idm-action-tile" id="btnPopupVerifyHash">
+            <svg viewBox="0 0 24 24"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></svg>
+            <span>Verify Checksum</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="idm-popup-footer">
+        <button type="button" class="apple-btn apple-btn-glass" id="btnPopupCloseDone">Close</button>
+        <button type="button" class="apple-btn apple-btn-glass" id="btnPopupOpenMainDone">
+          <svg class="btn-svg" viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
+          <span>Open Main WDM</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>
