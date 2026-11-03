@@ -50,9 +50,9 @@ public partial class MainWindow : Window
         {
             _isCompactMode = true;
             MinWidth = 480;
-            MinHeight = 440;
-            Width = 540;
-            Height = 530;
+            MinHeight = 460;
+            Width = 560;
+            Height = 620;
             Title = "WDM — Quick Download";
         }
 
@@ -86,9 +86,9 @@ public partial class MainWindow : Window
             if (compact)
             {
                 MinWidth = 480;
-                MinHeight = 440;
-                Width = 540;
-                Height = 530;
+                MinHeight = 460;
+                Width = 560;
+                Height = 620;
                 Title = "WDM — Quick Download";
                 Left = workArea.Left + (workArea.Width - Width) / 2;
                 Top = workArea.Top + (workArea.Height - Height) / 2;

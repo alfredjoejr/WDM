@@ -1789,6 +1789,11 @@
       if (popupExtrasChevron) {
         popupExtrasChevron.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(180deg)';
       }
+      if (!isOpen) {
+        setTimeout(() => {
+          popupExtrasDrawer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }, 80);
+      }
     });
   }
 

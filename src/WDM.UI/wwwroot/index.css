@@ -1528,18 +1528,41 @@ body.compact-mode #idmPopupPanel {
 .idm-popup-stage {
   display: flex;
   flex-direction: column;
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
+  max-height: 100%;
   overflow: hidden;
 }
 
 .idm-popup-body {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 100%;
   padding: 14px 16px;
-  overflow-y: auto;
+  overflow-y: auto !important;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
   gap: 11px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+}
+
+.idm-popup-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.idm-popup-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.idm-popup-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 99px;
+}
+
+.idm-popup-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.45);
 }
 
 .idm-summary-card {
