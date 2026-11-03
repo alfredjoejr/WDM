@@ -2178,9 +2178,17 @@
 
   if (btnPopupVerifyHash) {
     btnPopupVerifyHash.addEventListener('click', () => {
-      const task = activePopupDownloadId ? downloads.get(activePopupDownloadId) : null;
+      let task = activePopupDownloadId ? downloads.get(activePopupDownloadId) : null;
+      if (!task && activePopupPayload) {
+        task = {
+          id: activePopupDownloadId,
+          fileName: (popupDoneFileName && popupDoneFileName.textContent) || activePopupPayload.fileName,
+          filePath: (popupDonePath && popupDonePath.textContent) || activePopupPayload.destinationDirectory,
+          sha256: (popupDoneSha256 && popupDoneSha256.textContent !== '--') ? popupDoneSha256.textContent.trim() : null
+        };
+      }
       if (task) {
-        openVerifyModal(task);
+        openVerifyHashModal(task);
       }
     });
   }
