@@ -335,26 +335,54 @@ chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
   }
 
   if (req.action === "sniff_media") {
-    sendNativeMessage({ action: "sniff_media", url: req.url })
-      .then(res => sendResponse(res))
-      .catch(err => sendResponse({ success: false, message: err.message }));
+    (async () => {
+      let cookieHeader = "";
+      try {
+        if (chrome.cookies && chrome.cookies.getAll && req.url) {
+          const isIg = req.url.includes("instagram.com");
+          const cookies = await chrome.cookies.getAll(isIg ? { domain: "instagram.com" } : { url: req.url });
+          cookieHeader = cookies.map(c => `${c.name}=${c.value}`).join("; ");
+        }
+      } catch { }
+      try {
+        const res = await sendNativeMessage({ action: "sniff_media", url: req.url, cookieHeader });
+        sendResponse(res);
+      } catch (err) {
+        sendResponse({ success: false, message: err.message });
+      }
+    })();
     return true;
   }
 
   if (req.action === "download_media") {
-    sendNativeMessage({
-      action: "download_media",
-      url: req.url,
-      formatId: req.formatId,
-      title: req.title,
-      fileName: req.fileName,
-      isAudioOnly: req.isAudioOnly || false,
-      resolution: req.resolution || null,
-      extension: req.extension || null,
-      fileSizeBytes: req.fileSizeBytes || null
-    })
-      .then(res => sendResponse(res))
-      .catch(err => sendResponse({ success: false, message: err.message }));
+    (async () => {
+      let cookieHeader = "";
+      try {
+        if (chrome.cookies && chrome.cookies.getAll && req.url) {
+          const isIg = req.url.includes("instagram.com");
+          const cookies = await chrome.cookies.getAll(isIg ? { domain: "instagram.com" } : { url: req.url });
+          cookieHeader = cookies.map(c => `${c.name}=${c.value}`).join("; ");
+        }
+      } catch { }
+      try {
+        const res = await sendNativeMessage({
+          action: "download_media",
+          url: req.url,
+          formatId: req.formatId,
+          directUrl: req.directUrl || null,
+          title: req.title,
+          fileName: req.fileName,
+          isAudioOnly: req.isAudioOnly || false,
+          resolution: req.resolution || null,
+          extension: req.extension || null,
+          fileSizeBytes: req.fileSizeBytes || null,
+          cookieHeader
+        });
+        sendResponse(res);
+      } catch (err) {
+        sendResponse({ success: false, message: err.message });
+      }
+    })();
     return true;
   }
 

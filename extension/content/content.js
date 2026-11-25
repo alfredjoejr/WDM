@@ -1,43 +1,56 @@
-// WDM (Windows Download Manager) — Video Stream Hooker (IDM Experience)
-// Automatically hooks onto YouTube, Vimeo, Facebook, Twitter, TikTok, and HTML5 video players.
+// WDM (Windows Download Manager) — Video & Social Media Stream Hooker (IDM Experience)
+// Supports YouTube, Instagram (Stories, Story Highlights, Reels, Video & Photo Posts, Carousels),
+// TikTok, Twitter/X, Facebook, Vimeo, and generic HTML5 video players via a top-level portal
+// that is never trapped underneath site click-shields or story overlays.
 
 (function () {
   'use strict';
 
-  const ATTACHED_ATTR = 'data-wdm-hooked';
+  const isInstagram = /(^|\.)instagram\.com$/i.test(window.location.hostname);
+
   let activeHooker = null;
-  let currentVideoUrl = '';
+  let trackedAnchorEl = null;
+  let currentTargetUrl = '';
+  let currentSlideIndex = null;
   let cachedStreams = null;
   let isSniffing = false;
+  let dismissedForUrl = '';
   let mouseIdleTimer = null;
 
   function init() {
     chrome.storage.local.get(['mediaSniffer'], (res) => {
       if (res.mediaSniffer === false) return;
 
-      scanAndHookVideos();
+      ensurePortal();
+      scanActiveMedia();
 
-      // Listen for YouTube Single Page Application (SPA) navigation
-      window.addEventListener('yt-navigate-finish', () => {
-        setTimeout(handleUrlOrVideoChange, 600);
+      // YouTube SPA navigation hooks
+      window.addEventListener('yt-navigate-finish', () => setTimeout(handleNavigationChange, 450));
+      window.addEventListener('spfdone', () => setTimeout(handleNavigationChange, 450));
+
+      // Reposition portal cleanly on scroll, resize, and fullscreen transitions
+      window.addEventListener('scroll', updatePortalPosition, { passive: true, capture: true });
+      window.addEventListener('resize', updatePortalPosition, { passive: true });
+      document.addEventListener('fullscreenchange', () => {
+        reattachPortalRoot();
+        updatePortalPosition();
       });
 
-      window.addEventListener('spfdone', () => {
-        setTimeout(handleUrlOrVideoChange, 600);
-      });
-
-      // General URL change polling for dynamic websites
+      // Poll URL, active video/story target, and story slide transitions
       let lastHref = window.location.href;
       setInterval(() => {
         if (window.location.href !== lastHref) {
           lastHref = window.location.href;
-          handleUrlOrVideoChange();
+          dismissedForUrl = '';
+          handleNavigationChange();
+          return;
         }
-      }, 1000);
+        scanActiveMedia();
+        updatePortalPosition();
+      }, 450);
 
-      // DOM Mutation observer to catch dynamically inserted video players
       const observer = new MutationObserver(() => {
-        scanAndHookVideos();
+        scanActiveMedia();
       });
 
       observer.observe(document.documentElement, {
@@ -47,207 +60,506 @@
     });
   }
 
-  function handleUrlOrVideoChange() {
-    currentVideoUrl = '';
+  function handleNavigationChange() {
+    currentTargetUrl = '';
+    currentSlideIndex = null;
     cachedStreams = null;
     isSniffing = false;
-    scanAndHookVideos(true);
+    scanActiveMedia(true);
   }
 
-  function scanAndHookVideos(forceRehook = false) {
-    // 1. YouTube specialized player container
-    const ytPlayer = document.querySelector('#movie_player') || document.querySelector('.html5-video-player');
-    if (ytPlayer) {
-      if (forceRehook || !ytPlayer.hasAttribute(ATTACHED_ATTR)) {
-        ytPlayer.setAttribute(ATTACHED_ATTR, 'true');
-        mountHooker(ytPlayer, true);
-      }
-      return;
-    }
-
-    // 2. Generic HTML5 video players across all websites
-    const videos = document.querySelectorAll('video');
-    videos.forEach((video) => {
-      if (!forceRehook && video.hasAttribute(ATTACHED_ATTR)) return;
-      if (video.offsetWidth < 160 || video.offsetHeight < 120) return; // Skip tiny background loops / audio previews
-
-      video.setAttribute(ATTACHED_ATTR, 'true');
-      const targetContainer = findBestMountContainer(video);
-      mountHooker(targetContainer, false, video);
-    });
+  function createSvgPlayIcon() {
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    const path = document.createElementNS(svgNS, 'path');
+    path.setAttribute('d', 'M8 5v14l11-7z');
+    svg.appendChild(path);
+    return svg;
   }
 
-  function findBestMountContainer(video) {
-    let parent = video.parentElement;
-    while (parent && parent !== document.body) {
-      const style = window.getComputedStyle(parent);
-      if (style.position === 'relative' || style.position === 'absolute' || style.position === 'fixed') {
-        return parent;
-      }
-      if (parent.classList.contains('player') || parent.id.includes('player') || parent.classList.contains('video-container')) {
-        parent.style.position = 'relative';
-        return parent;
-      }
-      parent = parent.parentElement;
-    }
-
-    // Fallback: make direct parent relative
-    if (video.parentElement) {
-      video.parentElement.style.position = 'relative';
-      return video.parentElement;
-    }
-    return document.body;
-  }
-
-  function mountHooker(container, isYouTube = false, videoElement = null) {
-    // Prevent duplicate hookers in the same container
-    const existing = container.querySelector('.wdm-hooker-wrapper');
-    if (existing) {
-      activeHooker = existing;
-      triggerStreamSniffer();
-      return;
+  function ensurePortal() {
+    if (activeHooker && document.documentElement.contains(activeHooker)) {
+      return activeHooker;
     }
 
     const wrapper = document.createElement('div');
     wrapper.className = 'wdm-hooker-wrapper';
+    wrapper.style.display = 'none';
 
-    wrapper.innerHTML = `
-      <div class="wdm-hooker-bar" title="Click to view all download formats">
-        <div class="wdm-hooker-main">
-          <span class="wdm-play-icon">
-            <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-          </span>
-          <span class="wdm-hooker-label">Download this video</span>
-          <span class="wdm-file-count" style="display:none;"></span>
-          <span class="wdm-chevron">▾</span>
-        </div>
-        <div class="wdm-hooker-divider"></div>
-        <button class="wdm-hooker-btn wdm-btn-help" title="WDM High-Speed Downloader">?</button>
-        <button class="wdm-hooker-btn wdm-btn-close" title="Hide this bar">✕</button>
-      </div>
+    // Top bar
+    const bar = document.createElement('div');
+    bar.className = 'wdm-hooker-bar';
+    bar.title = 'Click to view all download formats';
 
-      <!-- Dropdown Formats Menu -->
-      <div class="wdm-formats-menu">
-        <div class="wdm-menu-header">
-          <span class="wdm-menu-title">Detecting video...</span>
-        </div>
-        <div class="wdm-menu-body">
-          <div class="wdm-loading-streams">
-            <div class="wdm-spinner"></div>
-            <span>Inspecting video streams...</span>
-          </div>
-        </div>
-        <div class="wdm-menu-footer">
-          <div class="wdm-footer-item wdm-quick-dl" data-action="quick_download">
-            <span>⚡ Quick Download (Best Quality)</span>
-          </div>
-          <div class="wdm-footer-item wdm-audio-dl" data-action="audio_only">
-            <span>🎵 Audio Only (MP3)</span>
-          </div>
-          <div class="wdm-footer-item wdm-open-app" data-action="open_app">
-            <span>🚀 Open WDM Dashboard</span>
-          </div>
-        </div>
-      </div>
-    `;
+    const mainBtn = document.createElement('div');
+    mainBtn.className = 'wdm-hooker-main';
 
-    const mainBtn = wrapper.querySelector('.wdm-hooker-main');
-    const closeBtn = wrapper.querySelector('.wdm-btn-close');
-    const helpBtn = wrapper.querySelector('.wdm-btn-help');
-    const menu = wrapper.querySelector('.wdm-formats-menu');
+    const playSpan = document.createElement('span');
+    playSpan.className = 'wdm-play-icon';
+    playSpan.appendChild(createSvgPlayIcon());
 
-    // Toggle dropdown menu
+    const labelSpan = document.createElement('span');
+    labelSpan.className = 'wdm-hooker-label';
+    labelSpan.textContent = 'Download this video';
+
+    const countSpan = document.createElement('span');
+    countSpan.className = 'wdm-file-count';
+    countSpan.style.display = 'none';
+
+    const chevronSpan = document.createElement('span');
+    chevronSpan.className = 'wdm-chevron';
+    chevronSpan.textContent = '\u25BE';
+
+    mainBtn.appendChild(playSpan);
+    mainBtn.appendChild(labelSpan);
+    mainBtn.appendChild(countSpan);
+    mainBtn.appendChild(chevronSpan);
+
+    const divider = document.createElement('div');
+    divider.className = 'wdm-hooker-divider';
+
+    const helpBtn = document.createElement('button');
+    helpBtn.className = 'wdm-hooker-btn wdm-btn-help';
+    helpBtn.title = 'WDM High-Speed Downloader';
+    helpBtn.textContent = '?';
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'wdm-hooker-btn wdm-btn-close';
+    closeBtn.title = 'Hide this bar';
+    closeBtn.textContent = '\u2715';
+
+    bar.appendChild(mainBtn);
+    bar.appendChild(divider);
+    bar.appendChild(helpBtn);
+    bar.appendChild(closeBtn);
+
+    // Dropdown menu
+    const menu = document.createElement('div');
+    menu.className = 'wdm-formats-menu';
+
+    const menuHeader = document.createElement('div');
+    menuHeader.className = 'wdm-menu-header';
+    const menuTitle = document.createElement('span');
+    menuTitle.className = 'wdm-menu-title';
+    menuTitle.textContent = 'Detecting media...';
+    menuHeader.appendChild(menuTitle);
+
+    const menuBody = document.createElement('div');
+    menuBody.className = 'wdm-menu-body';
+
+    const menuFooter = document.createElement('div');
+    menuFooter.className = 'wdm-menu-footer';
+
+    const footerActions = [
+      { cls: 'wdm-quick-dl', action: 'quick_download', text: '\u26A1 Quick Download (Best Quality)' },
+      { cls: 'wdm-audio-dl', action: 'audio_only', text: '\uD83C\uDFB5 Audio Only (MP3)' },
+      { cls: 'wdm-open-app', action: 'open_app', text: '\uD83D\uDE80 Open WDM Dashboard' }
+    ];
+
+    footerActions.forEach((cfg) => {
+      const fItem = document.createElement('div');
+      fItem.className = `wdm-footer-item ${cfg.cls}`;
+      fItem.setAttribute('data-action', cfg.action);
+      const s = document.createElement('span');
+      s.textContent = cfg.text;
+      fItem.appendChild(s);
+      fItem.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        wrapper.classList.remove('open');
+        const resolvedUrl = resolveEffectiveMediaUrl();
+        if (cfg.action === 'open_app') {
+          showToast('Opening WDM Dashboard...');
+          sendExtensionMessage({ action: 'open_app', url: resolvedUrl }).then((res) => {
+            if (!res || res.success === false) {
+              showToast('\u26A0 Could not open WDM Dashboard: ' + (res?.message || 'Host disconnected'));
+            }
+          });
+        } else if (cfg.action === 'audio_only') {
+          startDownload({ formatId: null, isAudioOnly: true });
+        } else {
+          // Pick current/best format if cached
+          const bestFmt = cachedStreams && Array.isArray(cachedStreams.formats) && cachedStreams.formats.length > 0
+            ? cachedStreams.formats[0]
+            : null;
+          if (bestFmt) {
+            startDownload({
+              formatId: bestFmt.formatId,
+              directUrl: bestFmt.directUrl || null,
+              isAudioOnly: !!bestFmt.isAudioOnly,
+              title: cachedStreams.title,
+              ext: bestFmt.extension,
+              resolution: bestFmt.resolution,
+              fileSizeBytes: bestFmt.fileSizeBytes
+            });
+          } else {
+            startDownload({ formatId: null, isAudioOnly: false });
+          }
+        }
+      });
+      menuFooter.appendChild(fItem);
+    });
+
+    menu.appendChild(menuHeader);
+    menu.appendChild(menuBody);
+    menu.appendChild(menuFooter);
+
+    wrapper.appendChild(bar);
+    wrapper.appendChild(menu);
+
+    // Shield all pointer/mouse/touch events from bubbling into Instagram's story pause/next overlay!
+    ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick', 'touchstart', 'touchend', 'contextmenu'].forEach((evtName) => {
+      wrapper.addEventListener(evtName, (e) => {
+        e.stopPropagation();
+      });
+    });
+
     mainBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       e.preventDefault();
       wrapper.classList.toggle('open');
+      wrapper.classList.remove('wdm-dimmed');
       if (wrapper.classList.contains('open')) {
-        if (!cachedStreams) {
+        const freshUrl = resolveEffectiveMediaUrl();
+        if (!cachedStreams || freshUrl !== currentTargetUrl) {
           showLoadingSpinner();
-          if (!isSniffing) {
-            triggerStreamSniffer(true);
-          }
+          triggerStreamSniffer(true);
         }
       }
     });
 
-    // Close button dismisses bar for this session
     closeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
+      e.preventDefault();
+      dismissedForUrl = window.location.href;
+      wrapper.classList.remove('open');
       wrapper.style.display = 'none';
     });
 
     helpBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      showToast("WDM Video Downloader is active and catching streams.");
+      e.preventDefault();
+      showToast('WDM Downloader is active — supports Videos, Stories, Highlights, Reels & Posts.');
     });
 
-    // Close menu when clicking elsewhere on the page
     document.addEventListener('click', (e) => {
-      if (!wrapper.contains(e.target)) {
+      if (wrapper && !wrapper.contains(e.target)) {
         wrapper.classList.remove('open');
       }
-    });
+    }, true);
 
-    // Footer actions
-    wrapper.querySelectorAll('.wdm-footer-item').forEach((item) => {
-      item.addEventListener('click', (e) => {
-        e.stopPropagation();
-        wrapper.classList.remove('open');
-        const action = item.getAttribute('data-action');
-
-        if (action === 'open_app') {
-          showToast("Opening WDM Dashboard...");
-          sendExtensionMessage({ action: 'open_app', url: window.location.href }).then((res) => {
-            if (!res || res.success === false) {
-              showToast("⚠ Could not open WDM Dashboard: " + (res?.message || "Host disconnected"));
-            }
-          });
-        } else if (action === 'audio_only') {
-          startDownload(null, true);
-        } else {
-          startDownload(null, false);
-        }
-      });
-    });
-
-    // Auto-dimming on mouse idle so it doesn't obstruct video playback
-    const resetIdleTimer = () => {
+    wrapper.addEventListener('mouseenter', () => {
       wrapper.classList.remove('wdm-dimmed');
       clearTimeout(mouseIdleTimer);
-      mouseIdleTimer = setTimeout(() => {
-        if (!wrapper.classList.contains('open') && !wrapper.matches(':hover')) {
-          wrapper.classList.add('wdm-dimmed');
-        }
-      }, 4000);
-    };
+    });
 
-    container.addEventListener('mousemove', resetIdleTimer);
-    container.addEventListener('mouseenter', resetIdleTimer);
-    container.addEventListener('mouseleave', () => {
-      if (!wrapper.classList.contains('open')) {
-        wrapper.classList.add('wdm-dimmed');
+    activeHooker = wrapper;
+    reattachPortalRoot();
+    showLoadingSpinner();
+    return wrapper;
+  }
+
+  function reattachPortalRoot() {
+    if (!activeHooker) return;
+    const hostRoot = document.fullscreenElement || document.body || document.documentElement;
+    if (hostRoot && activeHooker.parentElement !== hostRoot) {
+      hostRoot.appendChild(activeHooker);
+    }
+  }
+
+  function isElementVisibleInViewport(el, minW = 160, minH = 120) {
+    if (!el || !el.isConnected) return false;
+    const rect = el.getBoundingClientRect();
+    if (rect.width < minW || rect.height < minH) return false;
+    const visTop = Math.max(0, rect.top);
+    const visBottom = Math.min(window.innerHeight, rect.bottom);
+    const visLeft = Math.max(0, rect.left);
+    const visRight = Math.min(window.innerWidth, rect.right);
+    return (visBottom - visTop) >= 80 && (visRight - visLeft) >= 80;
+  }
+
+  function pickBestViewportElement(candidates, minW = 180, minH = 150) {
+    const viewCenterY = window.innerHeight / 2;
+    const viewCenterX = window.innerWidth / 2;
+    let best = null;
+    let bestScore = -Infinity;
+
+    candidates.forEach((el) => {
+      if (!isElementVisibleInViewport(el, minW, minH)) return;
+      const r = el.getBoundingClientRect();
+      const centerX = r.left + r.width / 2;
+      const centerY = r.top + r.height / 2;
+      const dist = Math.hypot(centerX - viewCenterX, centerY - viewCenterY);
+      const area = r.width * r.height;
+      const playingBonus = (el.tagName === 'VIDEO' && !el.paused) ? 250000 : 0;
+      const score = area + playingBonus - (dist * 450);
+      if (score > bestScore) {
+        bestScore = score;
+        best = el;
       }
     });
 
-    container.appendChild(wrapper);
-    activeHooker = wrapper;
+    return best;
+  }
 
-    // Begin sniffing streams in background
-    triggerStreamSniffer();
+  function findInstagramActiveMedia() {
+    const path = window.location.pathname;
+
+    // 1. Instagram Stories & Story Highlights (/stories/...)
+    if (path.startsWith('/stories/')) {
+      const vids = Array.from(document.querySelectorAll('video'));
+      const activeVid = pickBestViewportElement(vids, 180, 220);
+      if (activeVid) {
+        return { anchor: findInstagramStoryCard(activeVid) || activeVid, kind: 'story_video', mediaEl: activeVid };
+      }
+
+      // Photo Story slide (no <video>, large story <img>)
+      const imgs = Array.from(document.querySelectorAll('img')).filter((img) => {
+        const r = img.getBoundingClientRect();
+        return r.width >= 200 && r.height >= 260;
+      });
+      const activeImg = pickBestViewportElement(imgs, 200, 260);
+      if (activeImg) {
+        return { anchor: findInstagramStoryCard(activeImg) || activeImg, kind: 'story_photo', mediaEl: activeImg };
+      }
+      return null;
+    }
+
+    // 2. Instagram Reels, Posts, Modal Dialogs, and Home Feed
+    const scopeRoot = document.querySelector('div[role="dialog"]') || document;
+    const vids = Array.from(scopeRoot.querySelectorAll('video'));
+    const bestVid = pickBestViewportElement(vids, 180, 180);
+    if (bestVid) {
+      return { anchor: bestVid, kind: 'ig_video', mediaEl: bestVid };
+    }
+
+    // Photo Post / Carousel on /p/, modal dialog, or feed <article>
+    if (path.startsWith('/p/') || path.startsWith('/reel/') || path.startsWith('/reels/') || document.querySelector('div[role="dialog"]') || document.querySelector('article')) {
+      const postImgs = Array.from(scopeRoot.querySelectorAll('article img, div[role="dialog"] img, main img')).filter((img) => {
+        const r = img.getBoundingClientRect();
+        if (r.width < 240 || r.height < 240) return false;
+        // Exclude tiny profile avatars
+        const alt = (img.alt || '').toLowerCase();
+        if (alt.includes('profile picture')) return false;
+        return true;
+      });
+      const bestImg = pickBestViewportElement(postImgs, 240, 240);
+      if (bestImg) {
+        return { anchor: bestImg, kind: 'ig_photo', mediaEl: bestImg };
+      }
+    }
+
+    return null;
+  }
+
+  function findInstagramStoryCard(el) {
+    let cur = el.parentElement;
+    let best = el;
+    while (cur && cur !== document.body) {
+      const r = cur.getBoundingClientRect();
+      // Story player card has vertical phone aspect ratio (~300-600px wide, 500-950px tall)
+      if (r.width >= 240 && r.width <= Math.min(680, window.innerWidth * 0.92) && r.height >= 360 && r.height <= window.innerHeight) {
+        best = cur;
+      }
+      cur = cur.parentElement;
+    }
+    return best;
+  }
+
+  function detectInstagramSlideIndex(anchorEl) {
+    if (!isInstagram) return null;
+    const path = window.location.pathname;
+
+    // Check URL query parameter ?img_index=K first (Instagram carousels)
+    const params = new URLSearchParams(window.location.search);
+    const imgIdx = parseInt(params.get('img_index') || '', 10);
+    if (!Number.isNaN(imgIdx) && imgIdx >= 1) return imgIdx;
+
+    // Story / Highlight progress bar detection:
+    // At the top of the story card, Instagram renders 1 horizontal segment per slide.
+    // Completed slides have an inner bar at ~100% width; active slide has >0% width; upcoming slides have 0% width.
+    if (path.startsWith('/stories/') && anchorEl) {
+      const cardRect = anchorEl.getBoundingClientRect();
+      // Find candidate progress track containers near the top 45px of the story card
+      const allDivs = anchorEl.querySelectorAll('div');
+      for (const container of allDivs) {
+        const children = container.children;
+        if (children.length < 2 || children.length > 100) continue;
+        const cRect = container.getBoundingClientRect();
+        if (Math.abs(cRect.top - cardRect.top) > 50 || cRect.height > 14 || cRect.width < cardRect.width * 0.6) {
+          continue;
+        }
+
+        // Verify children sit horizontally side-by-side (progress segments)
+        const firstRect = children[0].getBoundingClientRect();
+        const secondRect = children[1].getBoundingClientRect();
+        if (secondRect.left <= firstRect.left || firstRect.height > 10) continue;
+
+        let activeSlide = 1;
+        for (let i = 0; i < children.length; i++) {
+          const seg = children[i];
+          const segRect = seg.getBoundingClientRect();
+          const inner = seg.firstElementChild;
+          if (!inner) continue;
+          const innerRect = inner.getBoundingClientRect();
+          const fillRatio = segRect.width > 0 ? (innerRect.width / segRect.width) : 0;
+          if (fillRatio > 0.02) {
+            activeSlide = i + 1;
+          }
+        }
+        return activeSlide;
+      }
+    }
+
+    return null;
+  }
+
+  function resolveEffectiveMediaUrl() {
+    let base = window.location.href.split('#')[0];
+
+    if (isInstagram) {
+      const path = window.location.pathname;
+      // If browsing Home Feed (/), Profile, or Explore modal, locate permalink (/p/... or /reel/...) of tracked media
+      if (!path.startsWith('/stories/') && !path.startsWith('/p/') && !path.startsWith('/reel/') && !path.startsWith('/reels/') && !path.startsWith('/tv/') && trackedAnchorEl) {
+        const container = trackedAnchorEl.closest('article') || trackedAnchorEl.closest('div[role="dialog"]');
+        if (container) {
+          const link = container.querySelector('a[href*="/reel/"], a[href*="/reels/"], a[href*="/p/"], a[href*="/tv/"]');
+          if (link && link.href) {
+            base = link.href.split('#')[0];
+          }
+        }
+      }
+
+      const slideIdx = detectInstagramSlideIndex(trackedAnchorEl);
+      currentSlideIndex = slideIdx;
+      if (slideIdx && slideIdx >= 1) {
+        return `${base}#wdm-slide=${slideIdx}`;
+      }
+    }
+
+    return base;
+  }
+
+  function scanActiveMedia(forceRefresh = false) {
+    ensurePortal();
+    if (!activeHooker) return;
+
+    if (dismissedForUrl && dismissedForUrl === window.location.href) {
+      activeHooker.style.display = 'none';
+      return;
+    }
+
+    let nextAnchor = null;
+    let barLabelText = 'Download this video';
+
+    if (isInstagram) {
+      const igTarget = findInstagramActiveMedia();
+      if (igTarget) {
+        nextAnchor = igTarget.anchor;
+        if (igTarget.kind === 'story_photo') barLabelText = 'Download Story Photo';
+        else if (igTarget.kind === 'story_video') barLabelText = 'Download Story';
+        else if (igTarget.kind === 'ig_photo') barLabelText = 'Download Photo / Post';
+        else barLabelText = 'Download Reel / Video';
+      }
+    } else {
+      const ytPlayer = document.querySelector('#movie_player') || document.querySelector('.html5-video-player');
+      if (ytPlayer && isElementVisibleInViewport(ytPlayer, 200, 140)) {
+        nextAnchor = ytPlayer;
+      } else {
+        const vids = Array.from(document.querySelectorAll('video'));
+        nextAnchor = pickBestViewportElement(vids, 160, 120);
+      }
+    }
+
+    if (!nextAnchor) {
+      if (!activeHooker.classList.contains('open')) {
+        activeHooker.style.display = 'none';
+      }
+      trackedAnchorEl = null;
+      return;
+    }
+
+    const anchorChanged = trackedAnchorEl !== nextAnchor;
+    trackedAnchorEl = nextAnchor;
+
+    // Bind mouse wake listener on tracked container once
+    if (!nextAnchor.hasAttribute('data-wdm-mouse-bound')) {
+      nextAnchor.setAttribute('data-wdm-mouse-bound', '1');
+      const wakeBar = () => {
+        if (!activeHooker) return;
+        activeHooker.classList.remove('wdm-dimmed');
+        clearTimeout(mouseIdleTimer);
+        mouseIdleTimer = setTimeout(() => {
+          if (activeHooker && !activeHooker.classList.contains('open') && !activeHooker.matches(':hover')) {
+            activeHooker.classList.add('wdm-dimmed');
+          }
+        }, 4500);
+      };
+      nextAnchor.addEventListener('mousemove', wakeBar, { passive: true });
+      nextAnchor.addEventListener('mouseenter', wakeBar, { passive: true });
+    }
+
+    const labelEl = activeHooker.querySelector('.wdm-hooker-label');
+    if (labelEl && !labelEl.textContent.startsWith('Downloading') && !labelEl.textContent.startsWith('\u2713') && !labelEl.textContent.startsWith('Opening')) {
+      labelEl.textContent = barLabelText;
+    }
+
+    activeHooker.style.display = 'block';
+    updatePortalPosition();
+
+    const effectiveUrl = resolveEffectiveMediaUrl();
+    if (forceRefresh || anchorChanged || effectiveUrl !== currentTargetUrl) {
+      triggerStreamSniffer(forceRefresh || effectiveUrl !== currentTargetUrl);
+    }
+  }
+
+  function updatePortalPosition() {
+    if (!activeHooker || activeHooker.style.display === 'none') return;
+    if (!trackedAnchorEl || !trackedAnchorEl.isConnected) {
+      if (!activeHooker.classList.contains('open')) {
+        activeHooker.style.display = 'none';
+      }
+      return;
+    }
+
+    const rect = trackedAnchorEl.getBoundingClientRect();
+    if (rect.width < 100 || rect.height < 80 || rect.bottom < 60 || rect.top > window.innerHeight - 40) {
+      if (!activeHooker.classList.contains('open')) {
+        activeHooker.style.display = 'none';
+      }
+      return;
+    }
+
+    // On Instagram Stories/Highlights, place the bar cleanly below the story progress segments
+    // and Mute/Pause/... header controls (62px down from top of story card) so neither UI overlaps!
+    const isIgStory = isInstagram && window.location.pathname.startsWith('/stories/');
+    const topOffset = isIgStory ? 62 : 12;
+    const rightOffset = isIgStory ? 12 : 16;
+
+    const computedTop = Math.max(10, Math.min(window.innerHeight - 48, Math.round(rect.top + topOffset)));
+    const computedRight = Math.max(10, Math.min(window.innerWidth - 190, Math.round(window.innerWidth - rect.right + rightOffset)));
+
+    activeHooker.style.top = `${computedTop}px`;
+    activeHooker.style.right = `${computedRight}px`;
+    activeHooker.style.left = 'auto';
   }
 
   function showLoadingSpinner() {
     if (!activeHooker) return;
     const menuBody = activeHooker.querySelector('.wdm-menu-body');
-    if (menuBody) {
-      menuBody.innerHTML = `
-        <div class="wdm-loading-streams">
-          <div class="wdm-spinner"></div>
-          <span>Sniffing video & audio streams...</span>
-        </div>
-      `;
-    }
+    if (!menuBody) return;
+    menuBody.textContent = '';
+
+    const wrap = document.createElement('div');
+    wrap.className = 'wdm-loading-streams';
+    const spinner = document.createElement('div');
+    spinner.className = 'wdm-spinner';
+    const txt = document.createElement('span');
+    txt.textContent = 'Sniffing streams & slides...';
+    wrap.appendChild(spinner);
+    wrap.appendChild(txt);
+    menuBody.appendChild(wrap);
   }
 
   function sendExtensionMessage(msg) {
@@ -260,7 +572,7 @@
             if (chrome.runtime.lastError) {
               resolve({ success: false, message: chrome.runtime.lastError.message });
             } else {
-              resolve(response || { success: false, message: "No response from extension" });
+              resolve(response || { success: false, message: 'No response from extension' });
             }
           }
         });
@@ -269,7 +581,7 @@
           res.then((response) => {
             if (!settled) {
               settled = true;
-              resolve(response || { success: false, message: "No response from extension" });
+              resolve(response || { success: false, message: 'No response from extension' });
             }
           }).catch((err) => {
             if (!settled) {
@@ -285,11 +597,22 @@
   }
 
   function triggerStreamSniffer(force = false) {
-    const pageUrl = window.location.href;
-    if (!force && pageUrl === currentVideoUrl && (cachedStreams || isSniffing)) return;
+    const targetUrl = resolveEffectiveMediaUrl();
+    if (!force && targetUrl === currentTargetUrl && (cachedStreams || isSniffing)) return;
+
+    // If only the #wdm-slide=K hash changed on the same Instagram Story Highlight/Carousel,
+    // re-highlight the active slide immediately without even needing a round-trip if already cached!
+    const prevBase = currentTargetUrl.split('#')[0];
+    const nextBase = targetUrl.split('#')[0];
+    currentTargetUrl = targetUrl;
+
+    if (!force && prevBase === nextBase && cachedStreams && Array.isArray(cachedStreams.formats) && cachedStreams.formats.length > 1 && currentSlideIndex) {
+      reorderInstagramFormatsForSlide(cachedStreams, currentSlideIndex);
+      updateHookerUI(cachedStreams);
+      return;
+    }
 
     if (force) cachedStreams = null;
-    currentVideoUrl = pageUrl;
     isSniffing = true;
 
     if (activeHooker) {
@@ -301,114 +624,167 @@
     }
 
     sendExtensionMessage({
-      action: "sniff_media",
-      url: pageUrl
+      action: 'sniff_media',
+      url: targetUrl
     }).then((res) => {
       isSniffing = false;
-
       if (!activeHooker) return;
 
       if (res && res.success && res.data && res.data.formats && res.data.formats.length > 0) {
         cachedStreams = res.data;
         updateHookerUI(res.data);
       } else {
-        const errorMsg = res?.message || res?.error || (res ? JSON.stringify(res) : 'Unknown response');
-        console.warn("[WDM] Stream sniff result:", errorMsg);
-        fallbackHtml5Detection(errorMsg);
+        const errorMsg = res?.message || res?.error || 'Could not inspect stream';
+        fallbackDomMediaDetection(errorMsg);
       }
     });
   }
 
-  function fallbackHtml5Detection(errorMsg = '') {
-    const video = document.querySelector('video');
-    const directSrc = video ? (video.currentSrc || video.src) : null;
+  function reorderInstagramFormatsForSlide(data, slideNum) {
+    if (!data || !Array.isArray(data.formats)) return;
+    const targetFid = `ig_slide_${slideNum}`;
+    const targetFmt = data.formats.find(f => f.formatId === targetFid);
+    if (!targetFmt) return;
 
-    if (directSrc && !directSrc.startsWith('blob:')) {
+    // Clean previous "Current" star label and promote the newly active slide to top
+    data.formats.forEach((f) => {
+      const m = /^ig_slide_(\d+)$/.exec(f.formatId || '');
+      if (m) {
+        const num = m[1];
+        f.resolution = `Slide #${num} \u2022 ${f.isImage ? 'Photo' : 'Video'}`;
+      }
+    });
+
+    targetFmt.resolution = `\u2605 Current (#${slideNum})`;
+    const rest = data.formats.filter(f => f !== targetFmt);
+    data.formats = [targetFmt, ...rest];
+  }
+
+  function pickHighestResFromImg(img) {
+    if (!img) return null;
+    const srcset = img.getAttribute('srcset');
+    if (srcset) {
+      let bestUrl = null;
+      let bestW = -1;
+      srcset.split(',').forEach((entry) => {
+        const parts = entry.trim().split(/\s+/);
+        if (parts.length >= 1 && parts[0].startsWith('http')) {
+          const w = parts[1] ? parseInt(parts[1], 10) || 0 : 0;
+          if (w >= bestW) {
+            bestW = w;
+            bestUrl = parts[0];
+          }
+        }
+      });
+      if (bestUrl) return bestUrl;
+    }
+    return (img.currentSrc || img.src || '').startsWith('http') ? (img.currentSrc || img.src) : null;
+  }
+
+  function fallbackDomMediaDetection(errorMsg = '') {
+    // 1. Direct HTML5 <video src="https://...">
+    const video = (trackedAnchorEl && trackedAnchorEl.tagName === 'VIDEO')
+      ? trackedAnchorEl
+      : (trackedAnchorEl ? trackedAnchorEl.querySelector('video') : document.querySelector('video'));
+    const directVideoSrc = video ? (video.currentSrc || video.src) : null;
+
+    if (directVideoSrc && directVideoSrc.startsWith('http')) {
       const fallbackData = {
-        title: document.title || "HTML5 Web Video",
+        title: document.title || 'Web Video',
         formats: [
-          { formatId: null, resolution: "Direct Stream", extension: "mp4", fileSizeBytes: null, isAudioOnly: false }
+          { formatId: 'direct_video', directUrl: directVideoSrc, resolution: 'Direct Stream', extension: 'mp4', fileSizeBytes: null, isAudioOnly: false }
         ]
       };
       cachedStreams = fallbackData;
       updateHookerUI(fallbackData);
-    } else if (activeHooker) {
-      const menuBody = activeHooker.querySelector('.wdm-menu-body');
-      if (menuBody) {
-        // Build DOM safely (no innerHTML) so errorMsg can never inject markup
-        menuBody.textContent = '';
-        const wrap = document.createElement('div');
-        wrap.style.cssText = 'padding: 14px 10px; text-align: center; color: #94a3b8; font-size: 11px;';
+      return;
+    }
 
-        const readyText = document.createElement('span');
-        readyText.textContent = 'Ready to download with WDM.';
-        wrap.appendChild(readyText);
-        wrap.appendChild(document.createElement('br'));
-
-        if (errorMsg) {
-          const errDiv = document.createElement('div');
-          errDiv.style.cssText = 'color: #f87171; font-size: 10px; margin: 6px 0; word-break: break-all;';
-          errDiv.textContent = `(${errorMsg})`;
-          wrap.appendChild(errDiv);
-        }
-
-        const retryBtnEl = document.createElement('button');
-        retryBtnEl.className = 'wdm-retry-sniff-btn';
-        retryBtnEl.style.cssText = 'margin-top: 8px; padding: 4px 12px; background: rgba(0,113,227,0.2); border: 1px solid rgba(0,113,227,0.5); color: #38bdf8; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 500;';
-        retryBtnEl.textContent = '\u21BB Retry Sniffing Formats';
-        wrap.appendChild(retryBtnEl);
-
-        menuBody.appendChild(wrap);
-        const retryBtn = retryBtnEl;
-        if (retryBtn) {
-          retryBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            showLoadingSpinner();
-            triggerStreamSniffer(true);
-          });
-        }
+    // 2. Direct Instagram Photo Story / Photo Post fallback from live DOM <img>
+    if (isInstagram && trackedAnchorEl) {
+      const img = trackedAnchorEl.tagName === 'IMG' ? trackedAnchorEl : trackedAnchorEl.querySelector('img');
+      const bestImgUrl = pickHighestResFromImg(img);
+      if (bestImgUrl && !video) {
+        const fallbackPhoto = {
+          title: document.title || 'Instagram Photo',
+          formats: [
+            { formatId: 'direct_photo', directUrl: bestImgUrl, resolution: 'HD Photo', extension: 'jpg', fileSizeBytes: null, isAudioOnly: false, isImage: true }
+          ]
+        };
+        cachedStreams = fallbackPhoto;
+        updateHookerUI(fallbackPhoto);
+        return;
       }
     }
+
+    if (!activeHooker) return;
+    const menuBody = activeHooker.querySelector('.wdm-menu-body');
+    if (!menuBody) return;
+
+    menuBody.textContent = '';
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'padding: 14px 10px; text-align: center; color: #94a3b8; font-size: 11px;';
+
+    const readyText = document.createElement('span');
+    readyText.textContent = 'Ready to download with WDM.';
+    wrap.appendChild(readyText);
+    wrap.appendChild(document.createElement('br'));
+
+    if (errorMsg) {
+      const errDiv = document.createElement('div');
+      errDiv.style.cssText = 'color: #f87171; font-size: 10px; margin: 6px 0; word-break: break-all;';
+      errDiv.textContent = `(${errorMsg})`;
+      wrap.appendChild(errDiv);
+    }
+
+    const retryBtn = document.createElement('button');
+    retryBtn.className = 'wdm-retry-sniff-btn';
+    retryBtn.style.cssText = 'margin-top: 8px; padding: 4px 12px; background: rgba(0,113,227,0.2); border: 1px solid rgba(0,113,227,0.5); color: #38bdf8; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 500;';
+    retryBtn.textContent = '\u21BB Retry Sniffing Formats';
+    retryBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showLoadingSpinner();
+      triggerStreamSniffer(true);
+    });
+    wrap.appendChild(retryBtn);
+    menuBody.appendChild(wrap);
   }
 
   function updateHookerUI(data) {
     if (!activeHooker) return;
 
     const formats = data.formats || [];
-    const videoCount = formats.length;
-
-    // Update count badge on bar
     const countBadge = activeHooker.querySelector('.wdm-file-count');
-    if (countBadge && videoCount > 0) {
-      countBadge.textContent = `(${videoCount})`;
-      countBadge.style.display = 'inline-block';
+    if (countBadge) {
+      if (formats.length > 0) {
+        countBadge.textContent = `(${formats.length})`;
+        countBadge.style.display = 'inline-block';
+      } else {
+        countBadge.style.display = 'none';
+      }
     }
 
-    // Update menu title
     const menuTitle = activeHooker.querySelector('.wdm-menu-title');
     if (menuTitle) {
-      menuTitle.textContent = data.title || document.title || 'Video Stream';
+      menuTitle.textContent = data.title || document.title || 'Media Stream';
       menuTitle.title = menuTitle.textContent;
     }
 
-    // Populate formats list
     const menuBody = activeHooker.querySelector('.wdm-menu-body');
     if (!menuBody) return;
+    menuBody.textContent = '';
 
-    menuBody.innerHTML = '';
-
-    const videoFormats = formats.filter(f => !f.isAudioOnly);
+    const primaryFormats = formats.filter(f => !f.isAudioOnly);
     const audioFormats = formats.filter(f => f.isAudioOnly);
 
-    if (videoFormats.length > 0) {
+    if (primaryFormats.length > 0) {
       const groupLabel = document.createElement('div');
       groupLabel.className = 'wdm-menu-group-label';
-      groupLabel.textContent = 'Video Streams';
+      groupLabel.textContent = isInstagram ? 'Stories / Posts / Streams' : 'Video Streams';
       menuBody.appendChild(groupLabel);
 
-      videoFormats.forEach((f) => {
-        const item = createFormatMenuItem(f, data.title);
-        menuBody.appendChild(item);
+      primaryFormats.forEach((f) => {
+        menuBody.appendChild(createFormatMenuItem(f, data.title));
       });
     }
 
@@ -419,18 +795,28 @@
       menuBody.appendChild(groupLabel);
 
       audioFormats.forEach((f) => {
-        const item = createFormatMenuItem(f, data.title);
-        menuBody.appendChild(item);
+        menuBody.appendChild(createFormatMenuItem(f, data.title));
       });
     }
   }
 
-  function createFormatMenuItem(f, videoTitle) {
+  function createFormatMenuItem(f, mediaTitle) {
     const item = document.createElement('div');
     item.className = 'wdm-stream-item';
 
-    const tagClass = f.isAudioOnly ? 'wdm-tag-audio' : 'wdm-tag-video';
-    const tagText = f.isAudioOnly ? 'AUDIO' : (f.extension ? f.extension.toUpperCase() : 'VIDEO');
+    let tagClass = 'wdm-tag-video';
+    let tagText = f.extension ? f.extension.toUpperCase() : 'VIDEO';
+    if (f.isAudioOnly) {
+      tagClass = 'wdm-tag-audio';
+      tagText = 'AUDIO';
+    } else if (f.formatId === 'ig_all_slides') {
+      tagClass = 'wdm-tag-batch';
+      tagText = 'BATCH';
+    } else if (f.isImage) {
+      tagClass = 'wdm-tag-photo';
+      tagText = 'PHOTO';
+    }
+
     const sizeText = f.fileSizeBytes ? formatBytes(f.fileSizeBytes) : (f.note || '');
 
     const left = document.createElement('div');
@@ -456,41 +842,57 @@
 
     item.addEventListener('click', (e) => {
       e.stopPropagation();
+      e.preventDefault();
       if (activeHooker) activeHooker.classList.remove('open');
-      startDownload(f.formatId, f.isAudioOnly, videoTitle, f.extension, f.resolution, f.fileSizeBytes);
+      startDownload({
+        formatId: f.formatId,
+        directUrl: f.directUrl || null,
+        isAudioOnly: !!f.isAudioOnly,
+        title: mediaTitle,
+        ext: f.extension,
+        resolution: f.resolution,
+        fileSizeBytes: f.fileSizeBytes
+      });
     });
 
     return item;
   }
 
-  function startDownload(formatId = null, isAudio = false, title = null, ext = null, resolution = null, fileSizeBytes = null) {
-    const pageUrl = window.location.href;
-    const safeTitle = (title || document.title || 'Video').replace(/[/\\?%*:|"<>]/g, '_').trim();
-    const finalExt = ext || (isAudio ? 'mp3' : 'mp4');
-    const fileName = `${safeTitle}.${finalExt}`;
+  function startDownload(opts = {}) {
+    const targetUrl = resolveEffectiveMediaUrl();
+    const rawTitle = opts.title || (cachedStreams && cachedStreams.title) || document.title || 'Media';
+    const safeTitle = rawTitle.replace(/[/\\?%*:|"<>]/g, '_').trim();
+    const finalExt = opts.ext || (opts.isAudioOnly ? 'mp3' : 'mp4');
+    const slideTag = (opts.formatId && /^ig_slide_\d+$/.test(opts.formatId) && cachedStreams && cachedStreams.formats && cachedStreams.formats.length > 3)
+      ? `_${opts.formatId.replace('ig_', '')}`
+      : '';
+    const fileName = opts.formatId === 'ig_all_slides'
+      ? `${safeTitle}_All_Slides`
+      : `${safeTitle}${slideTag}.${finalExt}`;
 
-    showToast(`✓ Opening WDM Quick Download for: ${fileName}`);
+    showToast(`\u2713 Opening WDM Quick Download: ${fileName}`);
 
     if (activeHooker) {
       const label = activeHooker.querySelector('.wdm-hooker-label');
       if (label) {
         label.textContent = 'Opening WDM Popup...';
         setTimeout(() => {
-          if (label) label.textContent = 'Download with WDM';
+          if (label) label.textContent = isInstagram ? 'Download with WDM' : 'Download this video';
         }, 2500);
       }
     }
 
     sendExtensionMessage({
-      action: "download_media",
-      url: pageUrl,
-      formatId: formatId,
+      action: 'download_media',
+      url: targetUrl,
+      formatId: opts.formatId || null,
+      directUrl: opts.directUrl || null,
       title: safeTitle,
       fileName: fileName,
-      isAudioOnly: isAudio,
-      resolution: resolution || (isAudio ? 'Audio Stream' : 'Best Video'),
+      isAudioOnly: !!opts.isAudioOnly,
+      resolution: opts.resolution || (opts.isAudioOnly ? 'Audio Stream' : 'Best Quality'),
       extension: finalExt,
-      fileSizeBytes: fileSizeBytes || null
+      fileSizeBytes: opts.fileSizeBytes || null
     });
   }
 
@@ -501,7 +903,7 @@
     const toast = document.createElement('div');
     toast.className = 'wdm-extension-toast';
     toast.textContent = message;
-    document.body.appendChild(toast);
+    (document.fullscreenElement || document.body).appendChild(toast);
 
     setTimeout(() => {
       if (toast.parentElement) toast.remove();
@@ -519,48 +921,34 @@
     return bytes.toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
   }
 
-  // Live status updater on the floating video bar
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((msg) => {
-      if (!msg) return;
+      if (!msg || !activeHooker) return;
+      const label = activeHooker.querySelector('.wdm-hooker-label');
+      if (!label) return;
 
       if (msg.type === 'download_progress' || msg.type === 'media_download_progress') {
         const data = msg.data || msg;
-        if (activeHooker) {
-          const label = activeHooker.querySelector('.wdm-hooker-label');
-          if (label) {
-            const pct = Math.round(data.percentage || 0);
-            let speedText = '';
-            if (data.status) {
-              const m = data.status.match(/at\s+(\S+\/s)/i);
-              if (m) speedText = ` (${m[1]})`;
-            }
-            label.textContent = `Downloading ${pct}%${speedText}`;
-          }
+        const pct = Math.round(data.percentage || 0);
+        let speedText = '';
+        const statusStr = data.status || data.statusText || '';
+        if (statusStr) {
+          const m = statusStr.match(/at\s+(\S+\/s)/i);
+          if (m) speedText = ` (${m[1]})`;
         }
+        label.textContent = `Downloading ${pct}%${speedText}`;
       } else if (msg.type === 'download_completed' || msg.type === 'media_download_completed') {
-        if (activeHooker) {
-          const label = activeHooker.querySelector('.wdm-hooker-label');
-          if (label) {
-            label.textContent = '✓ Download Complete!';
-            setTimeout(() => {
-              label.textContent = 'Download this video';
-            }, 6000);
-          }
-        }
-        showToast('✓ Video downloaded successfully! Saved to Downloads.');
+        label.textContent = '\u2713 Download Complete!';
+        setTimeout(() => {
+          label.textContent = isInstagram ? 'Download with WDM' : 'Download this video';
+        }, 5000);
+        showToast('\u2713 Media downloaded successfully!');
       } else if (msg.type === 'download_failed' || msg.type === 'media_download_failed') {
-        if (activeHooker) {
-          const label = activeHooker.querySelector('.wdm-hooker-label');
-          if (label) {
-            label.textContent = 'Download this video';
-          }
-        }
+        label.textContent = isInstagram ? 'Download with WDM' : 'Download this video';
       }
     });
   }
 
-  // Launch on DOM ready
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
   } else {

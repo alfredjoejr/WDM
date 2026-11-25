@@ -958,7 +958,9 @@ public partial class MainWindow : Window
                         extension = f.Extension,
                         fileSizeBytes = f.FileSizeBytes,
                         note = f.Note,
-                        isAudioOnly = f.IsAudioOnly
+                        isAudioOnly = f.IsAudioOnly,
+                        isImage = f.IsImage,
+                        directUrl = f.DirectUrl
                     })
                 }
             });
@@ -973,6 +975,7 @@ public partial class MainWindow : Window
     {
         var url = root.GetProperty("url").GetString()!;
         var formatId = root.TryGetProperty("formatId", out var fProp) ? fProp.GetString() : null;
+        var directUrl = root.TryGetProperty("directUrl", out var duProp) ? duProp.GetString() : null;
         var title = root.TryGetProperty("title", out var tProp) ? tProp.GetString() : "Media Video";
         var fileName = root.TryGetProperty("fileName", out var fnProp) ? fnProp.GetString() : null;
         var destinationDirectory = root.TryGetProperty("destinationDirectory", out var dProp) ? dProp.GetString() : null;
@@ -1040,7 +1043,8 @@ public partial class MainWindow : Window
                             });
                         }
                     },
-                    cancellationToken: cts.Token);
+                    cancellationToken: cts.Token,
+                    directUrl: directUrl);
 
                 string? sha256 = null, md5 = null, sha1 = null, hashMatchError = null;
                 bool? hashMatched = null;

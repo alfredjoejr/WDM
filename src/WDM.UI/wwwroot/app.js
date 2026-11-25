@@ -1235,18 +1235,21 @@
   function createStreamButton(f, isAudio, title, url) {
     const btn = document.createElement('button');
     btn.className = 'format-btn' + (isAudio ? ' audio-btn' : '');
-    const icon = isAudio ? '🎵' : '🎬';
-    const sizeStr = f.fileSizeBytes ? ` (${formatBytes(f.fileSizeBytes)})` : '';
-    btn.innerHTML = `<span>${icon}</span> <span>${f.resolution} • ${f.extension.toUpperCase()}${sizeStr}</span>`;
+    const icon = isAudio ? '\uD83C\uDFB5' : (f.formatId === 'ig_all_slides' ? '\uD83D\uDCE6' : (f.isImage ? '\uD83D\uDDBC\uFE0F' : '\uD83C\uDFAC'));
+    const sizeStr = f.fileSizeBytes ? ` (${formatBytes(f.fileSizeBytes)})` : (f.note ? ` (${f.note})` : '');
+    const extText = (f.extension || (isAudio ? 'mp3' : 'mp4')).toUpperCase();
+    btn.innerHTML = `<span>${icon}</span> <span>${f.resolution} \u2022 ${extText}${sizeStr}</span>`;
     btn.addEventListener('click', () => {
       openMediaDownloadModal({
         url: url,
         formatId: f.formatId,
+        directUrl: f.directUrl || null,
         resolution: f.resolution,
         extension: f.extension || (isAudio ? 'mp3' : 'mp4'),
         fileSizeBytes: f.fileSizeBytes,
         sizeStr: sizeStr,
         isAudioOnly: isAudio,
+        isImage: !!f.isImage,
         title: title || 'Media Video'
       });
     });
@@ -1301,6 +1304,7 @@
     sendToHost('download_media', {
       url: currentMediaTarget.url,
       formatId: currentMediaTarget.formatId,
+      directUrl: currentMediaTarget.directUrl || null,
       title: currentMediaTarget.title,
       fileName: fileName,
       destinationDirectory: savePath,
@@ -1838,6 +1842,7 @@
       isMedia,
       downloadId: dlId,
       url: msg.url,
+      directUrl: msg.directUrl || null,
       title: msg.title || cleanName.replace(/\.[^/.]+$/, ''),
       fileName: cleanName,
       formatId: msg.formatId || null,
@@ -1847,7 +1852,8 @@
       fileSizeBytes: msg.fileSizeBytes || null,
       connections: msg.connections || 16,
       headers: msg.headers || null,
-      destinationDirectory: targetDir
+      destinationDirectory: targetDir,
+      availableFormats: null
     };
     activePopupDownloadId = dlId;
 
@@ -1883,16 +1889,30 @@
       popupConnectionsSelect.value = String(msg.connections);
     }
 
+    const popupStreamSelectorRow = document.getElementById('popupStreamSelectorRow');
+    const popupStreamSelect = document.getElementById('popupStreamSelect');
+    if (popupStreamSelectorRow) popupStreamSelectorRow.style.display = 'none';
+    if (popupStreamSelect) popupStreamSelect.innerHTML = '';
+
     showPopupStage('config');
 
-    // If media stream is missing resolution/fileSizeBytes (e.g. from signed 1.0.0 XPI), fetch stream metadata in background
-    if (isMedia && msg.url && (!activePopupPayload.fileSizeBytes || !activePopupPayload.resolution)) {
+    // Fetch media stream / story slide options in background so multi-slide Highlights & Carousels can be chosen directly
+    if (isMedia && msg.url && (!activePopupPayload.fileSizeBytes || !activePopupPayload.resolution || msg.url.includes('instagram.com'))) {
       if (popupFileSize && !activePopupPayload.fileSizeBytes) popupFileSize.textContent = 'Inspecting stream...';
       sendToHost('sniff_media', { url: msg.url }).then(res => {
         if (!activePopupPayload || activePopupPayload.downloadId !== dlId) return;
-        if (res && res.success && res.data && Array.isArray(res.data.formats)) {
-          const matched = res.data.formats.find(f => f.formatId === activePopupPayload.formatId) || res.data.formats[0];
-          if (matched) {
+        if (res && res.success && res.data && Array.isArray(res.data.formats) && res.data.formats.length > 0) {
+          activePopupPayload.availableFormats = res.data.formats;
+          if (res.data.title && (!activePopupPayload.title || activePopupPayload.title === 'Media Video')) {
+            activePopupPayload.title = res.data.title;
+          }
+
+          const applyMatchedFormat = (matched) => {
+            if (!matched) return;
+            activePopupPayload.formatId = matched.formatId || activePopupPayload.formatId;
+            activePopupPayload.directUrl = matched.directUrl || null;
+            activePopupPayload.isAudioOnly = !!matched.isAudioOnly;
+            if (matched.extension) activePopupPayload.extension = matched.extension;
             if (matched.fileSizeBytes && matched.fileSizeBytes > 0) {
               activePopupPayload.fileSizeBytes = matched.fileSizeBytes;
               if (popupFileSize) popupFileSize.textContent = formatBytes(matched.fileSizeBytes);
@@ -1902,8 +1922,36 @@
             if (matched.resolution && popupFormatBadge) {
               activePopupPayload.resolution = matched.resolution;
               const eLbl = (matched.extension || activePopupPayload.extension || 'MP4').toUpperCase();
-              popupFormatBadge.textContent = activePopupPayload.isAudioOnly ? `AUDIO • ${eLbl}` : `${matched.resolution} • ${eLbl}`;
+              popupFormatBadge.textContent = activePopupPayload.isAudioOnly ? `AUDIO \u2022 ${eLbl}` : `${matched.resolution} \u2022 ${eLbl}`;
             }
+            if (popupFileName) {
+              const safeT = (res.data.title || activePopupPayload.title || 'Instagram_Media').replace(/[/\\?%*:|"<>]/g, '_').trim();
+              const ext = matched.extension || (matched.isAudioOnly ? 'mp3' : 'mp4');
+              const slideSuffix = (matched.formatId && /^ig_slide_\d+$/.test(matched.formatId) && res.data.formats.length > 3)
+                ? `_${matched.formatId.replace('ig_', '')}`
+                : '';
+              popupFileName.value = matched.formatId === 'ig_all_slides' ? `${safeT}_All_Slides` : `${safeT}${slideSuffix}.${ext}`;
+            }
+          };
+
+          const matched = res.data.formats.find(f => f.formatId === activePopupPayload.formatId) || res.data.formats[0];
+          applyMatchedFormat(matched);
+
+          if (res.data.formats.length > 1 && popupStreamSelectorRow && popupStreamSelect) {
+            popupStreamSelect.innerHTML = '';
+            res.data.formats.forEach((f, idx) => {
+              const opt = document.createElement('option');
+              opt.value = String(idx);
+              const sTxt = f.fileSizeBytes ? ` (${formatBytes(f.fileSizeBytes)})` : (f.note ? ` (${f.note})` : '');
+              opt.textContent = `${f.resolution} \u2022 ${(f.extension || 'MP4').toUpperCase()}${sTxt}`;
+              if (f === matched) opt.selected = true;
+              popupStreamSelect.appendChild(opt);
+            });
+            popupStreamSelectorRow.style.display = 'block';
+            popupStreamSelect.onchange = () => {
+              const chosen = res.data.formats[parseInt(popupStreamSelect.value, 10)];
+              applyMatchedFormat(chosen);
+            };
           }
         } else if (popupFileSize && popupFileSize.textContent === 'Inspecting stream...') {
           popupFileSize.textContent = 'Dynamic Stream';
@@ -1994,6 +2042,7 @@
           downloadId: activePopupPayload.downloadId,
           url: activePopupPayload.url,
           formatId: activePopupPayload.formatId,
+          directUrl: activePopupPayload.directUrl || null,
           title: activePopupPayload.title,
           fileName: finalFileName,
           destinationDirectory: finalSaveDir,

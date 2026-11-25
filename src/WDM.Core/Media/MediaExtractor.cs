@@ -14,10 +14,12 @@ public sealed partial class MediaExtractor : IMediaExtractor
     private static readonly string[] SupportedDomains =
     [
         "youtube.com", "youtu.be", "vimeo.com", "tiktok.com",
-        "twitter.com", "x.com", "instagram.com", "twitch.tv",
+        "twitter.com", "x.com", "instagram.com", "instagr.am",
+        "facebook.com", "fb.watch", "twitch.tv",
         "soundcloud.com", "reddit.com", "dailymotion.com"
     ];
 
+    private readonly InstagramExtractor _instagramExtractor = new();
     private static string? _cachedYtDlpPath;
     private static string? _cachedFfmpegDir;
     private static string? _preferredCookieArg;
@@ -172,17 +174,40 @@ public sealed partial class MediaExtractor : IMediaExtractor
     {
         try
         {
+            // 1. First-class native Instagram extractor (handles Story Highlights, Stories, Reels, Posts, Photos & Carousels)
+            if (InstagramExtractor.IsInstagramUrl(url))
+            {
+                var igMeta = await _instagramExtractor.ExtractMetadataAsync(url, cancellationToken);
+                if (igMeta != null && igMeta.Formats.Count > 0)
+                {
+                    return igMeta;
+                }
+            }
+
             var ytDlpPath = await GetYtDlpBinaryPathAsync(cancellationToken);
             var ffmpegDir = GetFFmpegDirectory();
             var ffmpegArg = !string.IsNullOrWhiteSpace(ffmpegDir) ? $"--ffmpeg-location \"{ffmpegDir}\"" : string.Empty;
 
             var attempts = new List<string>();
-            if (!string.IsNullOrWhiteSpace(_preferredCookieArg))
+            if (InstagramExtractor.IsInstagramUrl(url))
+            {
+                InstagramExtractor.ResolveInstagramCookieHeader(out var igCookieFile);
+                if (!string.IsNullOrWhiteSpace(igCookieFile))
+                {
+                    attempts.Add($"--cookies \"{igCookieFile}\"");
+                }
+            }
+            if (!string.IsNullOrWhiteSpace(_preferredCookieArg) && !attempts.Contains(_preferredCookieArg))
             {
                 attempts.Add(_preferredCookieArg);
             }
-            var isYouTube = url.Contains("youtube.com", StringComparison.OrdinalIgnoreCase) || url.Contains("youtu.be", StringComparison.OrdinalIgnoreCase);
-            if (isYouTube)
+            var needsAuthFirst = url.Contains("youtube.com", StringComparison.OrdinalIgnoreCase) ||
+                                 url.Contains("youtu.be", StringComparison.OrdinalIgnoreCase) ||
+                                 InstagramExtractor.IsInstagramUrl(url) ||
+                                 url.Contains("tiktok.com", StringComparison.OrdinalIgnoreCase) ||
+                                 url.Contains("twitter.com", StringComparison.OrdinalIgnoreCase) ||
+                                 url.Contains("x.com", StringComparison.OrdinalIgnoreCase);
+            if (needsAuthFirst)
             {
                 foreach (var c in BrowserCookieCandidates)
                 {
@@ -229,9 +254,18 @@ public sealed partial class MediaExtractor : IMediaExtractor
                     var outText = await stdOutTask;
                     if (proc.ExitCode == 0 && !string.IsNullOrWhiteSpace(outText) && outText.TrimStart().StartsWith('{'))
                     {
-                        json = outText;
-                        _preferredCookieArg = cookieArg;
-                        break;
+                        // Handle multi-line NDJSON (e.g. playlists / carousels) by taking the first valid JSON object line
+                        var firstLine = outText.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                            .FirstOrDefault(l => l.TrimStart().StartsWith('{'));
+                        if (!string.IsNullOrWhiteSpace(firstLine))
+                        {
+                            json = firstLine;
+                            if (!cookieArg.StartsWith("--cookies \"", StringComparison.Ordinal))
+                            {
+                                _preferredCookieArg = cookieArg;
+                            }
+                            break;
+                        }
                     }
                 }
                 catch (OperationCanceledException)
@@ -375,8 +409,26 @@ public sealed partial class MediaExtractor : IMediaExtractor
         string? outputFileName = null,
         bool isAudioOnly = false,
         Action<double, string>? progressCallback = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? directUrl = null)
     {
+        if (InstagramExtractor.IsInstagramUrl(url) || !string.IsNullOrWhiteSpace(directUrl) || (formatId?.StartsWith("ig_", StringComparison.OrdinalIgnoreCase) == true))
+        {
+            var igResult = await _instagramExtractor.TryDownloadAsync(
+                url,
+                formatId,
+                directUrl,
+                destinationDirectory,
+                outputFileName,
+                isAudioOnly,
+                progressCallback,
+                cancellationToken);
+            if (!string.IsNullOrWhiteSpace(igResult))
+            {
+                return igResult;
+            }
+        }
+
         var ytDlpPath = await GetYtDlpBinaryPathAsync(cancellationToken);
         var ffmpegDir = GetFFmpegDirectory();
         var ffmpegArg = !string.IsNullOrWhiteSpace(ffmpegDir) ? $"--ffmpeg-location \"{ffmpegDir}\"" : string.Empty;
@@ -419,8 +471,19 @@ public sealed partial class MediaExtractor : IMediaExtractor
             formatArg = "-f \"bestvideo+bestaudio/best\" --merge-output-format mp4";
         }
 
-        var isYouTube = url.Contains("youtube.com", StringComparison.OrdinalIgnoreCase) || url.Contains("youtu.be", StringComparison.OrdinalIgnoreCase);
-        var cookieArg = _preferredCookieArg ?? (isYouTube ? "--cookies-from-browser firefox" : string.Empty);
+        string cookieArg;
+        if (InstagramExtractor.IsInstagramUrl(url))
+        {
+            InstagramExtractor.ResolveInstagramCookieHeader(out var igCookieFile);
+            cookieArg = !string.IsNullOrWhiteSpace(igCookieFile)
+                ? $"--cookies \"{igCookieFile}\""
+                : (_preferredCookieArg ?? "--cookies-from-browser firefox");
+        }
+        else
+        {
+            var isYouTube = url.Contains("youtube.com", StringComparison.OrdinalIgnoreCase) || url.Contains("youtu.be", StringComparison.OrdinalIgnoreCase);
+            cookieArg = _preferredCookieArg ?? (isYouTube ? "--cookies-from-browser firefox" : string.Empty);
+        }
 
         var arguments = $"{formatArg} {ffmpegArg} {cookieArg} --no-warnings --continue --newline --progress -o \"{outputTemplate}\" \"{url}\"";
 

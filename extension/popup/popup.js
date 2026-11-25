@@ -95,10 +95,18 @@ document.addEventListener('DOMContentLoaded', async () => {
       connections: activeConnections
     }, (res) => {
       btnDownload.disabled = false;
-      btnDownload.innerHTML = `
-        <svg viewBox="0 0 24 24" class="btn-icon"><path d="M5 20h14v-2H5v2zM19 9h-4V3H9v6H5l7 7 7-7z"/></svg>
-        <span>Start</span>
-      `;
+      btnDownload.textContent = '';
+      const svgNS = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(svgNS, 'svg');
+      svg.setAttribute('viewBox', '0 0 24 24');
+      svg.setAttribute('class', 'btn-icon');
+      const path = document.createElementNS(svgNS, 'path');
+      path.setAttribute('d', 'M5 20h14v-2H5v2zM19 9h-4V3H9v6H5l7 7 7-7z');
+      svg.appendChild(path);
+      const span = document.createElement('span');
+      span.textContent = 'Start';
+      btnDownload.appendChild(svg);
+      btnDownload.appendChild(span);
 
       if (res && (res.downloadId || res.action === 'download_prompt_opened')) {
         urlInput.value = '';

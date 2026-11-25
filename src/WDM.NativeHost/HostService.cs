@@ -234,6 +234,18 @@ public sealed class HostService
             {
                 headers[prop.Name] = prop.Value.GetString() ?? string.Empty;
             }
+            if (headers.TryGetValue("Cookie", out var ckVal) && InstagramExtractor.IsInstagramUrl(url))
+            {
+                InstagramExtractor.SaveBrowserCookies(ckVal);
+            }
+        }
+
+        // Auto-route media page URLs (e.g. Instagram Stories/Posts/Reels, YouTube, TikTok) to the media extractor
+        // instead of downloading raw HTML when pasted into the extension's Quick URL box.
+        if (_mediaExtractor.IsSupported(url))
+        {
+            await HandleDownloadMediaAsync(root, requestId, ct);
+            return;
         }
 
         var downloadId = Guid.NewGuid().ToString("N");
@@ -270,6 +282,10 @@ public sealed class HostService
     private async Task HandleSniffMediaAsync(JsonElement root, string requestId, CancellationToken ct)
     {
         var url = root.GetProperty("url").GetString()!;
+        if (root.TryGetProperty("cookieHeader", out var ckProp) && ckProp.ValueKind == JsonValueKind.String)
+        {
+            InstagramExtractor.SaveBrowserCookies(ckProp.GetString());
+        }
         Program.Log($"HandleSniffMediaAsync: Sniffing streams for {url}");
         var metadata = await _mediaExtractor.ExtractMetadataAsync(url, ct);
 
@@ -281,7 +297,7 @@ public sealed class HostService
                 requestId,
                 action = "sniff_media_result",
                 success = false,
-                message = "No streams could be extracted or yt-dlp is missing"
+                message = "No streams could be extracted or login is required"
             }, ct);
             return;
         }
@@ -305,7 +321,9 @@ public sealed class HostService
                     extension = f.Extension,
                     fileSizeBytes = f.FileSizeBytes,
                     note = f.Note,
-                    isAudioOnly = f.IsAudioOnly
+                    isAudioOnly = f.IsAudioOnly,
+                    isImage = f.IsImage,
+                    directUrl = f.DirectUrl
                 })
             }
         }, ct);
@@ -314,7 +332,12 @@ public sealed class HostService
     private async Task HandleDownloadMediaAsync(JsonElement root, string requestId, CancellationToken ct)
     {
         var url = root.GetProperty("url").GetString()!;
+        if (root.TryGetProperty("cookieHeader", out var ckProp) && ckProp.ValueKind == JsonValueKind.String)
+        {
+            InstagramExtractor.SaveBrowserCookies(ckProp.GetString());
+        }
         var formatId = root.TryGetProperty("formatId", out var fProp) ? fProp.GetString() : null;
+        var directUrl = root.TryGetProperty("directUrl", out var duProp) ? duProp.GetString() : null;
         var title = root.TryGetProperty("title", out var tProp) ? tProp.GetString() : null;
         var fileName = root.TryGetProperty("fileName", out var fnProp) ? fnProp.GetString() : null;
         var isAudioOnly = root.TryGetProperty("isAudioOnly", out var aoProp) && aoProp.GetBoolean();
@@ -335,6 +358,7 @@ public sealed class HostService
             action = "ipc_download_media",
             downloadId,
             url,
+            directUrl,
             title = title ?? Path.GetFileNameWithoutExtension(fileName ?? "Media Video"),
             fileName = fileName ?? "Media Video.mp4",
             formatId,

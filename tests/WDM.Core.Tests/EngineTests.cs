@@ -149,4 +149,18 @@ public class EngineTests : IDisposable
         var isAvailable = await extractor.IsEngineAvailableAsync();
         Assert.True(isAvailable);
     }
+
+    [Fact]
+    public void InstagramExtractor_DetectsUrlsAndDecodesShortcodes()
+    {
+        Assert.True(WDM.Core.Media.InstagramExtractor.IsInstagramUrl("https://www.instagram.com/stories/highlights/17855495247546317/"));
+        Assert.True(WDM.Core.Media.InstagramExtractor.IsInstagramUrl("https://www.instagram.com/stories/instagram/123456789/"));
+        Assert.True(WDM.Core.Media.InstagramExtractor.IsInstagramUrl("https://www.instagram.com/p/C_abc123XYZ/"));
+        Assert.True(WDM.Core.Media.InstagramExtractor.IsInstagramUrl("https://www.instagram.com/reel/C_abc123XYZ/"));
+        Assert.False(WDM.Core.Media.InstagramExtractor.IsInstagramUrl("https://www.youtube.com/watch?v=123"));
+
+        var mediaId = WDM.Core.Media.InstagramExtractor.ShortcodeToMediaId("B-fKL92peab");
+        Assert.NotNull(mediaId);
+        Assert.NotEmpty(mediaId);
+    }
 }

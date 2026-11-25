@@ -12,5 +12,6 @@ public interface IMediaExtractor
         string? outputFileName = null,
         bool isAudioOnly = false,
         Action<double, string>? progressCallback = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string? directUrl = null);
 }
